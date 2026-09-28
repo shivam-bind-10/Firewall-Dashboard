@@ -321,6 +321,7 @@ function Login({ onLogin }) {
 
 function DashboardShell({ onLogout, rules, setRules, logs, addLog, notify }) {
   const location = useLocation();
+  const navigate = useNavigate();
   const [mobileOpen, setMobileOpen] = useState(false);
   const title = location.pathname.startsWith("/rules")
     ? "Firewall Rules"
@@ -419,7 +420,12 @@ function DashboardShell({ onLogout, rules, setRules, logs, addLog, notify }) {
               <span className="live-dot" />
               Secure connection
             </div>
-            <button className="icon-button notification">
+            <button
+              className="icon-button notification"
+              onClick={() => navigate("/analysis")}
+              aria-label="Review security signals"
+              title="Review security signals"
+            >
               <Bell size={18} />
               <i />
             </button>
@@ -435,7 +441,7 @@ function DashboardShell({ onLogout, rules, setRules, logs, addLog, notify }) {
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
             <Route
               path="/dashboard"
-              element={<Dashboard stats={stats} rules={rules} />}
+              element={<Dashboard stats={stats} rules={rules} logs={logs} />}
             />
             <Route path="/rules" element={<Rules {...shared} />} />
             <Route path="/rules/create" element={<RuleEditor {...shared} />} />
@@ -453,8 +459,32 @@ function DashboardShell({ onLogout, rules, setRules, logs, addLog, notify }) {
   );
 }
 
-function Dashboard({ stats, rules }) {
+function Dashboard({ stats, rules, logs }) {
   const alerts = analyze(rules);
+  const activityDays = Array.from({ length: 7 }, (_, index) => {
+    const date = new Date();
+    date.setHours(0, 0, 0, 0);
+    date.setDate(date.getDate() - (6 - index));
+    const dayLogs = logs.filter((log) => {
+      const logDate = new Date(log.time);
+      return logDate.toDateString() === date.toDateString();
+    });
+    return {
+      label: date.toLocaleDateString("en-US", { weekday: "short" }),
+      events: dayLogs.length,
+      changes: dayLogs.filter((log) => /RULE/.test(log.action)).length,
+    };
+  });
+  const maxActivity = Math.max(1, ...activityDays.map((day) => day.events));
+  const protocols = ["TCP", "UDP", "ICMP"];
+  const protocolCounts = protocols.map((protocol) =>
+    rules.filter((rule) => rule.protocol === protocol).length,
+  );
+  const otherCount = rules.length - protocolCounts.reduce((sum, count) => sum + count, 0);
+  const protocolPercentages = [...protocolCounts, otherCount].map((count) =>
+    rules.length ? (count / rules.length) * 100 : 0,
+  );
+  const totalEvents = activityDays.reduce((sum, day) => sum + day.events, 0);
   return (
     <>
       <PageIntro
@@ -510,24 +540,22 @@ function Dashboard({ stats, rules }) {
           <PanelHead title="Policy activity" meta="Last 7 days" />
           <div className="chart-area">
             <div className="chart-y">
-              <span>40</span>
-              <span>30</span>
-              <span>20</span>
-              <span>10</span>
+              <span>{maxActivity}</span>
+              <span>{Math.round(maxActivity * 0.75)}</span>
+              <span>{Math.round(maxActivity * 0.5)}</span>
+              <span>{Math.round(maxActivity * 0.25)}</span>
               <span>0</span>
             </div>
             <div className="chart">
               <div className="chart-grid-lines" />
-              {[22, 32, 24, 42, 35, 48, 52].map((height, index) => (
-                <div className="bar-group" key={index}>
-                  <div className="bar" style={{ height: `${height}%` }} />
+              {activityDays.map((day) => (
+                <div className="bar-group" key={day.label}>
+                  <div className="bar" style={{ height: `${day.events / maxActivity * 100}%` }} />
                   <div
                     className="bar-light"
-                    style={{ height: `${height * 0.54}%` }}
+                    style={{ height: `${day.changes / maxActivity * 100}%` }}
                   />
-                  <small>
-                    {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][index]}
-                  </small>
+                  <small>{day.label}</small>
                 </div>
               ))}
             </div>
@@ -535,31 +563,31 @@ function Dashboard({ stats, rules }) {
           <div className="chart-legend">
             <span>
               <i className="legend-blue" />
-              Rules evaluated
+              Audit events
             </span>
             <span>
               <i className="legend-muted" />
-              Policy changes
+              Rule changes
             </span>
             <strong>
-              +18.6% <small>vs last week</small>
+              {totalEvents} <small>events this week</small>
             </strong>
           </div>
         </section>
         <section className="panel distribution-panel">
-          <PanelHead title="Protocol distribution" meta="128 total" />
+          <PanelHead title="Protocol distribution" meta={`${rules.length} total`} />
           <div className="donut-wrap">
             <div className="donut">
               <div>
-                <strong>128</strong>
+                <strong>{rules.length}</strong>
                 <small>RULES</small>
               </div>
             </div>
             <div className="distribution-list">
-              <Legend label="TCP" value="52%" color="blue" />
-              <Legend label="UDP" value="24%" color="cyan" />
-              <Legend label="ICMP" value="14%" color="purple" />
-              <Legend label="ANY / Other" value="10%" color="muted" />
+              <Legend label="TCP" value={`${protocolCounts[0]} (${Math.round(protocolPercentages[0])}%)`} color="blue" />
+              <Legend label="UDP" value={`${protocolCounts[1]} (${Math.round(protocolPercentages[1])}%)`} color="cyan" />
+              <Legend label="ICMP" value={`${protocolCounts[2]} (${Math.round(protocolPercentages[2])}%)`} color="purple" />
+              <Legend label="ANY / Other" value={`${otherCount} (${Math.round(protocolPercentages[3])}%)`} color="muted" />
             </div>
           </div>
         </section>
@@ -587,24 +615,24 @@ function Dashboard({ stats, rules }) {
         <div className="alert-list">
           <AlertRow
             icon={Copy}
-            title="Duplicate rule detected"
-            text="FW-1038 matches an existing policy"
+            title={alerts.duplicates.length ? "Duplicate rule detected" : "No duplicate rules"}
+            text={alerts.duplicates.length ? `${alerts.duplicates[0].id} duplicates a traffic definition` : "All traffic definitions are unique"}
             tone="amber"
             count={alerts.duplicates.length}
           />
           <AlertRow
             icon={FileWarning}
-            title="Broad policy requires review"
-            text="FW-1038 allows traffic from ANY"
+            title={alerts.risky.length ? "Broad policy requires review" : "No broad allow policies"}
+            text={alerts.risky.length ? `${alerts.risky[0].id} allows a broad traffic scope` : "No permissive broad-scope rules found"}
             tone="red"
             count={alerts.risky.length}
           />
           <AlertRow
             icon={Network}
-            title="No conflicts detected"
-            text="All active policies are consistent"
-            tone="green"
-            count="OK"
+            title={alerts.conflicts.length ? "Conflicting actions detected" : "No conflicts detected"}
+            text={alerts.conflicts.length ? `${alerts.conflicts.length} overlapping traffic definitions have different actions` : "No matching traffic definitions have opposing actions"}
+            tone={alerts.conflicts.length ? "red" : "green"}
+            count={alerts.conflicts.length || "OK"}
           />
         </div>
       </section>
@@ -618,6 +646,7 @@ function Rules({ rules, setRules, addLog, notify }) {
   const [filter, setFilter] = useState("ALL");
   const [view, setView] = useState("table");
   const [confirm, setConfirm] = useState(null);
+  const activeFilterCount = Number(filter !== "ALL") + Number(Boolean(query));
   const filtered = rules.filter(
     (rule) =>
       Object.values(rule)
@@ -671,13 +700,15 @@ function Rules({ rules, setRules, addLog, notify }) {
             onChange={(e) => setQuery(e.target.value)}
           />
         </div>
-        <button className="secondary-button">
+        <button
+          className="secondary-button"
+          onClick={() => {
+            setQuery("");
+            setFilter("ALL");
+          }}
+        >
           <Filter size={16} />
-          Filters <span className="filter-count">{filtered.length}</span>
-        </button>
-        <button className="secondary-button">
-          <RefreshCw size={16} />
-          Refresh
+          Clear filters <span className="filter-count">{activeFilterCount}</span>
         </button>
         <div className="view-toggle">
           <button
@@ -771,23 +802,25 @@ function RuleEditor({ rules, setRules, addLog, notify }) {
     },
   );
   const [error, setError] = useState("");
+  if (id && !editing) return <Navigate to="/rules" replace />;
   const update = (key, value) => setForm({ ...form, [key]: value });
   const submit = (e) => {
     e.preventDefault();
     if (
-      !form.source ||
-      !form.destination ||
-      !form.destinationPort ||
-      !form.description
+      !form.source.trim() ||
+      !form.destination.trim() ||
+      !form.destinationPort.trim() ||
+      !form.description.trim()
     )
       return setError(
         "Complete all required fields before saving this policy.",
       );
-    if (
-      form.destinationPort !== "ANY" &&
-      (Number(form.destinationPort) < 0 || Number(form.destinationPort) > 65535)
-    )
-      return setError("Ports must be between 0 and 65535.");
+    if (!isValidNetworkAddress(form.source) || !isValidNetworkAddress(form.destination))
+      return setError("Enter a valid IPv4 address, CIDR range, or ANY.");
+    if (!isValidPort(form.sourcePort) || !isValidPort(form.destinationPort))
+      return setError("Ports must be ANY or whole numbers between 0 and 65535.");
+    if (!Number.isInteger(Number(form.priority)) || Number(form.priority) < 1)
+      return setError("Priority must be a whole number greater than zero.");
     if (editing) {
       setRules(
         rules.map((rule) =>
@@ -801,7 +834,7 @@ function RuleEditor({ rules, setRules, addLog, notify }) {
     } else {
       const newRule = {
         ...form,
-        id: `FW-${1043 + rules.length}`,
+        id: nextRuleId(rules),
         created: new Date().toISOString(),
       };
       setRules([newRule, ...rules]);
@@ -981,6 +1014,50 @@ function RuleEditor({ rules, setRules, addLog, notify }) {
 
 function Analysis({ rules }) {
   const result = analyze(rules);
+  const [lastRun, setLastRun] = useState(new Date());
+  const findings = [
+    ...result.risky.map((rule) => ({
+      key: `risky-${rule.id}`,
+      icon: AlertTriangle,
+      title: "Overly broad allow policy",
+      text: `${rule.id} allows broad traffic. Restrict its source, destination, or port scope.`,
+      tone: "amber",
+      level: "HIGH",
+    })),
+    ...result.duplicates.map((rule) => ({
+      key: `duplicate-${rule.id}`,
+      icon: Copy,
+      title: "Duplicate rule detected",
+      text: `${rule.id} duplicates an earlier traffic definition.`,
+      tone: "amber",
+      level: "MEDIUM",
+    })),
+    ...result.conflicts.map(({ first, second }) => ({
+      key: `conflict-${first.id}-${second.id}`,
+      icon: Network,
+      title: "Conflicting actions",
+      text: `${first.id} and ${second.id} match the same traffic with different actions.`,
+      tone: "red",
+      level: "HIGH",
+    })),
+    ...result.invalid.map((rule) => ({
+      key: `invalid-${rule.id}`,
+      icon: FileWarning,
+      title: "Invalid rule data",
+      text: `${rule.id} contains an invalid address, port, or priority.`,
+      tone: "red",
+      level: "HIGH",
+    })),
+  ];
+  const flaggedRules = new Set([
+    ...result.risky,
+    ...result.duplicates,
+    ...result.invalid,
+    ...result.conflicts.flatMap(({ first, second }) => [first, second]),
+  ].map((rule) => rule.id));
+  const healthScore = Math.round(
+    100 * (1 - flaggedRules.size / Math.max(1, rules.length)),
+  );
   return (
     <>
       <PageIntro
@@ -988,7 +1065,10 @@ function Analysis({ rules }) {
         title="Rule Analysis"
         subtitle="Application-level checks for duplicate, conflicting, and broad policies."
         action={
-          <button className="secondary-button">
+          <button
+            className="secondary-button"
+            onClick={() => setLastRun(new Date())}
+          >
             <RefreshCw size={16} />
             Run analysis
           </button>
@@ -996,7 +1076,7 @@ function Analysis({ rules }) {
       />
       <div className="analysis-score panel">
         <div className="score-ring">
-          <strong>{Math.max(0, 100 - result.risky.length * 8)}</strong>
+          <strong>{healthScore}</strong>
           <span>
             HEALTH
             <br />
@@ -1006,23 +1086,23 @@ function Analysis({ rules }) {
         <div>
           <p className="eyebrow">POLICY HEALTH</p>
           <h3>
-            {result.risky.length
+            {flaggedRules.size
               ? "Review recommended"
               : "Policy set looks healthy"}
           </h3>
           <p>
-            Analysis completed just now across {rules.length} simulated rules.
+            Analysis completed {lastRun.toLocaleTimeString()} across {rules.length} simulated rules.
             Findings are guidance, not a full enterprise firewall engine.
           </p>
         </div>
         <div className="analysis-meta">
           <span>
             <Check size={15} />
-            {rules.length - result.risky.length} rules passed
+            {rules.length - flaggedRules.size} rules passed
           </span>
           <span>
             <Clock3 size={15} />
-            Analysis duration 0.8s
+            Last run {lastRun.toLocaleTimeString()}
           </span>
         </div>
       </div>
@@ -1051,7 +1131,7 @@ function Analysis({ rules }) {
         <AnalysisCard
           icon={FileWarning}
           label="Invalid rules"
-          value="0"
+          value={result.invalid.length}
           detail="No validation errors"
           tone="green"
         />
@@ -1061,20 +1141,19 @@ function Analysis({ rules }) {
           title="Findings & recommendations"
           meta="Prioritized by risk"
         />
-        {result.risky.length ? (
-          <div className="finding">
-            <div className="finding-icon amber">
-              <AlertTriangle size={18} />
+        {findings.length ? (
+          findings.map(({ key, icon: Icon, title, text, tone, level }) => (
+            <div className="finding" key={key}>
+              <div className={`finding-icon ${tone}`}>
+                <Icon size={18} />
+              </div>
+              <div>
+                <strong>{title}</strong>
+                <p>{text}</p>
+              </div>
+              <span className="risk-pill">{level}</span>
             </div>
-            <div>
-              <strong>Overly broad allow policy</strong>
-              <p>
-                FW-1038 allows any source to any destination. Restrict the scope
-                before enabling this in a production-like scenario.
-              </p>
-            </div>
-            <span className="risk-pill">HIGH</span>
-          </div>
+          ))
         ) : (
           <EmptyState
             icon={Check}
@@ -1089,9 +1168,28 @@ function Analysis({ rules }) {
 
 function AuditLogs({ logs }) {
   const [query, setQuery] = useState("");
-  const visible = logs.filter((log) =>
-    Object.values(log).join(" ").toLowerCase().includes(query.toLowerCase()),
+  const [actionFilter, setActionFilter] = useState("ALL");
+  const visible = logs.filter(
+    (log) =>
+      Object.values(log).join(" ").toLowerCase().includes(query.toLowerCase()) &&
+      (actionFilter === "ALL" || log.action === actionFilter),
   );
+  const exportLogs = () => {
+    const columns = ["time", "action", "rule", "details", "status"];
+    const escapeCsv = (value) => `"${String(value).replaceAll('"', '""')}"`;
+    const csv = [
+      columns.join(","),
+      ...visible.map((log) => columns.map((column) => escapeCsv(log[column])).join(",")),
+    ].join("\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "firewall-audit-log.csv";
+    document.body.append(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
   return (
     <>
       <PageIntro
@@ -1099,9 +1197,9 @@ function AuditLogs({ logs }) {
         title="Audit Logs"
         subtitle="A transparent record of administrator activity across the console."
         action={
-          <button className="secondary-button">
+          <button className="secondary-button" onClick={exportLogs}>
             <Download size={16} />
-            Export log
+            Export {visible.length} events
           </button>
         }
       />
@@ -1138,10 +1236,20 @@ function AuditLogs({ logs }) {
               placeholder="Search events, users, or rule IDs..."
             />
           </div>
-          <button className="secondary-button">
+          <label className="secondary-button">
             <SlidersHorizontal size={16} />
-            All actions <ChevronDown size={14} />
-          </button>
+            <select
+              aria-label="Filter audit log by action"
+              value={actionFilter}
+              onChange={(event) => setActionFilter(event.target.value)}
+            >
+              <option value="ALL">All actions</option>
+              {[...new Set(logs.map((log) => log.action))].sort().map((action) => (
+                <option key={action} value={action}>{action}</option>
+              ))}
+            </select>
+            <ChevronDown size={14} />
+          </label>
         </div>
         <div className="log-list">
           {visible.map((log, index) => (
@@ -1553,12 +1661,19 @@ function Toast({ message, onClose }) {
   );
 }
 function analyze(rules) {
-  const signatures = rules.map((r) =>
-    [r.source, r.destination, r.protocol, r.sourcePort, r.destinationPort].join(
-      "|",
-    ),
-  );
-  const duplicates = signatures.filter((s, i) => signatures.indexOf(s) !== i);
+  const signatures = new Set();
+  const duplicates = rules.filter((rule) => {
+    const signature = [
+      rule.source,
+      rule.destination,
+      rule.protocol,
+      rule.sourcePort,
+      rule.destinationPort,
+    ].join("|");
+    if (signatures.has(signature)) return true;
+    signatures.add(signature);
+    return false;
+  });
   const risky = rules.filter(
     (r) =>
       r.action === "ALLOW" &&
@@ -1572,20 +1687,55 @@ function analyze(rules) {
           rule.source,
           rule.destination,
           rule.protocol,
+          rule.sourcePort,
           rule.destinationPort,
         ].join("|") ===
           [
             other.source,
             other.destination,
             other.protocol,
+            other.sourcePort,
             other.destinationPort,
           ].join("|") &&
         rule.action !== other.action
       )
-        conflicts.push(rule);
+        conflicts.push({ first: rule, second: other });
     }),
   );
-  return { duplicates, risky, conflicts };
+  const invalid = rules.filter(
+    (rule) =>
+      !isValidNetworkAddress(rule.source) ||
+      !isValidNetworkAddress(rule.destination) ||
+      !isValidPort(rule.sourcePort) ||
+      !isValidPort(rule.destinationPort) ||
+      !Number.isInteger(Number(rule.priority)) ||
+      Number(rule.priority) < 1,
+  );
+  return { duplicates, risky, conflicts, invalid };
+}
+function isValidPort(value) {
+  if (String(value).toUpperCase() === "ANY") return true;
+  if (!/^\d+$/.test(String(value))) return false;
+  const port = Number(value);
+  return port >= 0 && port <= 65535;
+}
+function isValidNetworkAddress(value) {
+  if (String(value).toUpperCase() === "ANY") return true;
+  const [address, prefix, ...extra] = String(value).split("/");
+  if (extra.length) return false;
+  const octets = address.split(".");
+  if (
+    octets.length !== 4 ||
+    octets.some((octet) => !/^\d{1,3}$/.test(octet) || Number(octet) > 255)
+  ) return false;
+  return prefix === undefined || (/^\d{1,2}$/.test(prefix) && Number(prefix) <= 32);
+}
+function nextRuleId(rules) {
+  const highestId = rules.reduce((highest, rule) => {
+    const match = /^FW-(\d+)$/.exec(rule.id);
+    return match ? Math.max(highest, Number(match[1])) : highest;
+  }, 0);
+  return `FW-${highestId + 1}`;
 }
 function formatDate(value) {
   return new Intl.DateTimeFormat("en-GB", {

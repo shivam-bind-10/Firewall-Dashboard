@@ -1,16 +1,41 @@
-# React + Vite
+# Sentinel Firewall Control
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+A responsive firewall policy dashboard built with React and Vite. Sentinel is an interactive **simulation** for creating, reviewing, and auditing example network rules; it does not configure an operating-system firewall or connect to a backend service.
 
-Currently, two official plugins are available:
+## Requirements
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- Node.js 20.19+ or 22.12+
+- npm
 
-## React Compiler
+## Run locally
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+```sh
+npm install
+npm run dev
+```
 
-## Expanding the Oxlint configuration
+Open the local URL printed by Vite. Sign in with any non-empty email address and password. The sign-in screen is a demo gate, not real authentication.
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+## Features
+
+- Overview of policy counts, protocol mix, audit activity, and security signals.
+- Create, edit, enable, disable, search, filter, and delete firewall rules.
+- Analyze duplicate definitions, opposing actions, broad allow rules, and invalid rule data.
+- Search and filter audit events, then export the visible results as CSV.
+- Responsive table and card views for policy review.
+
+Rules and audit events are stored in the browser's `localStorage` and remain on that browser. Clearing site data resets the sample data. No information is sent to a server.
+
+## Validation
+
+```sh
+npm run lint
+npm run build
+```
+
+## Technology
+
+- React 19
+- React Router
+- Vite
+- Lucide icons
