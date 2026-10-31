@@ -172,6 +172,11 @@ function App() {
   const [authenticated, setAuthenticated] = useState(
     () => localStorage.getItem("firewall-auth") === "true",
   );
+  const [profile, setProfile] = useState(() => ({
+    name: localStorage.getItem("firewall-profile-name") || "Shivam Bind",
+    email:
+      localStorage.getItem("firewall-profile-email") || "admin@sentinel.local",
+  }));
   const [rules, setRules] = useState(() =>
     JSON.parse(
       localStorage.getItem("firewall-rules") || JSON.stringify(seedRules),
@@ -201,6 +206,12 @@ function App() {
     setLogs(next);
     localStorage.setItem("firewall-logs", JSON.stringify(next));
   };
+  const saveProfile = (nextProfile) => {
+    setProfile(nextProfile);
+    localStorage.setItem("firewall-profile-name", nextProfile.name);
+    localStorage.setItem("firewall-profile-email", nextProfile.email);
+    addLog("UPDATE_PROFILE", "-", "Updated administrator profile.");
+  };
   const notify = (message, type = "success") => {
     setToast({ message, type });
     window.setTimeout(() => setToast(null), 3200);
@@ -228,6 +239,8 @@ function App() {
           logs={logs}
           addLog={addLog}
           notify={notify}
+          profile={profile}
+          saveProfile={saveProfile}
         />
       )}{" "}
       {toast && <Toast {...toast} onClose={() => setToast(null)} />}
@@ -326,7 +339,16 @@ function Login({ onLogin }) {
   );
 }
 
-function DashboardShell({ onLogout, rules, setRules, logs, addLog, notify }) {
+function DashboardShell({
+  onLogout,
+  rules,
+  setRules,
+  logs,
+  addLog,
+  notify,
+  profile,
+  saveProfile,
+}) {
   const location = useLocation();
   const navigate = useNavigate();
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -352,7 +374,7 @@ function DashboardShell({ onLogout, rules, setRules, logs, addLog, notify }) {
     deny: rules.filter((r) => r.action === "DENY").length,
     risky: result.risky.length,
   };
-  const shared = { rules, setRules, logs, addLog, notify };
+  const shared = { rules, setRules, logs, addLog, notify, profile };
   return (
     <div className="app-shell">
       <aside
@@ -409,9 +431,16 @@ function DashboardShell({ onLogout, rules, setRules, logs, addLog, notify }) {
             </div>
           </div>
           <div className="profile">
-            <div className="avatar">SB</div>
+            <div className="avatar">
+              {profile.name
+                .split(/\s+/)
+                .map((part) => part[0])
+                .join("")
+                .slice(0, 2)
+                .toUpperCase()}
+            </div>
             <div>
-              <strong>Shivam Bind</strong>
+              <strong>{profile.name}</strong>
               <small>Administrator</small>
             </div>
             <button className="icon-button" onClick={onLogout}>
@@ -458,11 +487,23 @@ function DashboardShell({ onLogout, rules, setRules, logs, addLog, notify }) {
               <Bell size={18} />
               {analysisFindingCount > 0 && <i />}
             </button>
-            <div className="top-profile">
-              <div className="avatar">SB</div>
-              <span>Shivam Bind</span>
+            <button
+              className="top-profile"
+              onClick={() => navigate("/settings")}
+              aria-label={`Open ${profile.name} profile settings`}
+              title="Open profile settings"
+            >
+              <div className="avatar">
+                {profile.name
+                  .split(/\s+/)
+                  .map((part) => part[0])
+                  .join("")
+                  .slice(0, 2)
+                  .toUpperCase()}
+              </div>
+              <span>{profile.name}</span>
               <ChevronDown size={15} />
-            </div>
+            </button>
           </div>
         </header>
         <main className="content">
@@ -478,9 +519,23 @@ function DashboardShell({ onLogout, rules, setRules, logs, addLog, notify }) {
               path="/rules/:id/edit"
               element={<RuleEditor {...shared} />}
             />
-            <Route path="/analysis" element={<Analysis rules={rules} />} />
+            <Route
+              path="/analysis"
+              element={<Analysis rules={rules} notify={notify} />}
+            />
             <Route path="/audit-logs" element={<AuditLogs logs={logs} />} />
-            <Route path="/settings" element={<Settings />} />
+            <Route
+              path="/settings"
+              element={
+                <Settings
+                  profile={profile}
+                  saveProfile={(nextProfile) => {
+                    saveProfile(nextProfile);
+                    notify("Profile updated.");
+                  }}
+                />
+              }
+            />
           </Routes>
         </main>
       </div>
@@ -1261,7 +1316,7 @@ function RuleEditor({ rules, setRules, addLog, notify }) {
   );
 }
 
-function Analysis({ rules }) {
+function Analysis({ rules, notify }) {
   const result = analyze(rules);
   const [lastRun, setLastRun] = useState(new Date());
   const findings = [
@@ -1316,7 +1371,10 @@ function Analysis({ rules }) {
         action={
           <button
             className="secondary-button"
-            onClick={() => setLastRun(new Date())}
+            onClick={() => {
+              setLastRun(new Date());
+              notify("Policy analysis refreshed.");
+            }}
           >
             <RefreshCw size={16} />
             Run analysis
@@ -1546,7 +1604,35 @@ function AuditLogs({ logs }) {
   );
 }
 
-function Settings() {
+function Settings({ profile, saveProfile }) {
+  const [editingProfile, setEditingProfile] = useState(false);
+  const [name, setName] = useState(profile.name);
+  const [email, setEmail] = useState(profile.email);
+  const [profileError, setProfileError] = useState("");
+  const initials = profile.name
+    .split(/\s+/)
+    .map((part) => part[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
+  const submitProfile = (event) => {
+    event.preventDefault();
+    const trimmedName = name.trim();
+    const trimmedEmail = email.trim();
+    if (!trimmedName || !trimmedEmail) {
+      setProfileError("Enter both a name and a valid email address.");
+      return;
+    }
+    saveProfile({ name: trimmedName, email: trimmedEmail });
+    setEditingProfile(false);
+    setProfileError("");
+  };
+  const cancelProfileEdit = () => {
+    setName(profile.name);
+    setEmail(profile.email);
+    setProfileError("");
+    setEditingProfile(false);
+  };
   return (
     <>
       <PageIntro
@@ -1559,19 +1645,65 @@ function Settings() {
           <PanelHead
             title="Profile"
             meta={
-              <button className="text-link">
-                Edit profile <Edit3 size={14} />
+              <button
+                className="text-link"
+                onClick={() => setEditingProfile((current) => !current)}
+                aria-expanded={editingProfile}
+              >
+                {editingProfile ? "Cancel editing" : "Edit profile"}
+                <Edit3 size={14} />
               </button>
             }
           />
           <div className="settings-profile">
-            <div className="avatar large">SB</div>
+            <div className="avatar large">{initials}</div>
             <div>
-              <h3>Shivam Bind</h3>
-              <p>admin@sentinel.local</p>
+              <h3>{profile.name}</h3>
+              <p>{profile.email}</p>
               <span className="role-tag">ADMINISTRATOR</span>
             </div>
           </div>
+          {editingProfile && (
+            <form className="profile-edit-form" onSubmit={submitProfile}>
+              <label>
+                Display name
+                <input
+                  autoComplete="name"
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
+                  required
+                />
+              </label>
+              <label>
+                Email address
+                <input
+                  autoComplete="email"
+                  type="email"
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                  required
+                />
+              </label>
+              {profileError && (
+                <div className="form-error" role="alert">
+                  <AlertTriangle size={15} />
+                  {profileError}
+                </div>
+              )}
+              <div className="profile-edit-actions">
+                <button
+                  className="secondary-button"
+                  type="button"
+                  onClick={cancelProfileEdit}
+                >
+                  Cancel
+                </button>
+                <button className="primary-button" type="submit">
+                  Save profile
+                </button>
+              </div>
+            </form>
+          )}
           <div className="setting-list">
             <div>
               <span>Role</span>
@@ -1579,7 +1711,7 @@ function Settings() {
             </div>
             <div>
               <span>Last sign in</span>
-              <strong>Today, 09:12 AM</strong>
+              <strong>Demo session</strong>
             </div>
             <div>
               <span>Session security</span>

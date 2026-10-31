@@ -147,6 +147,41 @@ nav a b {
 
 .top-profile {
   color: #48546a;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+.top-profile:hover {
+  color: #4269d7;
+}
+
+.profile-edit-form {
+  display: grid;
+  gap: 14px;
+  margin: 18px 20px;
+  padding: 16px;
+  border: 1px solid #e8ecf3;
+  border-radius: 12px;
+  background: #fafbfe;
+}
+
+.profile-edit-form label {
+  display: block;
+  color: #53617a;
+  font-size: 11px;
+}
+
+.profile-edit-form input {
+  margin-top: 7px;
+}
+
+.profile-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .content {
