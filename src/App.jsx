@@ -161,7 +161,7 @@ const initialLogs = [
 const navItems = [
   { to: "/dashboard", label: "Overview", icon: Gauge },
   { to: "/rules", label: "Firewall Rules", icon: Shield },
-  { to: "/analysis", label: "Rule Analysis", icon: Activity, badge: "3" },
+  { to: "/analysis", label: "Rule Analysis", icon: Activity },
   { to: "/audit-logs", label: "Audit Logs", icon: BookOpen },
 ];
 
@@ -337,6 +337,11 @@ function DashboardShell({ onLogout, rules, setRules, logs, addLog, notify }) {
           ? "Settings"
           : "Overview";
   const result = analyze(rules);
+  const analysisFindingCount =
+    result.duplicates.length +
+    result.risky.length +
+    result.conflicts.length +
+    result.invalid.length;
   const stats = {
     total: rules.length,
     active: rules.filter((r) => r.status === "ENABLED").length,
@@ -347,12 +352,17 @@ function DashboardShell({ onLogout, rules, setRules, logs, addLog, notify }) {
   const shared = { rules, setRules, logs, addLog, notify };
   return (
     <div className="app-shell">
-      <aside className={`sidebar ${mobileOpen ? "open" : ""}`}>
+      <aside
+        className={`sidebar ${mobileOpen ? "open" : ""}`}
+        id="primary-navigation"
+        aria-label="Primary navigation"
+      >
         <div className="sidebar-top">
           <Brand />
           <button
             className="icon-button mobile-close"
             onClick={() => setMobileOpen(false)}
+            aria-label="Close navigation"
           >
             <X size={18} />
           </button>
@@ -363,7 +373,7 @@ function DashboardShell({ onLogout, rules, setRules, logs, addLog, notify }) {
         </div>
         <nav>
           <p className="nav-label">CONTROL CENTER</p>
-          {navItems.map(({ to, label, icon: Icon, badge }) => (
+          {navItems.map(({ to, label, icon: Icon }) => (
             <NavLink
               key={to}
               to={to}
@@ -372,7 +382,9 @@ function DashboardShell({ onLogout, rules, setRules, logs, addLog, notify }) {
             >
               <Icon size={18} />
               <span>{label}</span>
-              {badge && <b>{badge}</b>}
+              {label === "Rule Analysis" && analysisFindingCount > 0 && (
+                <b>{analysisFindingCount}</b>
+              )}
             </NavLink>
           ))}
           <p className="nav-label nav-label-spaced">SYSTEM</p>
@@ -405,11 +417,21 @@ function DashboardShell({ onLogout, rules, setRules, logs, addLog, notify }) {
           </div>
         </div>
       </aside>
+      {mobileOpen && (
+        <button
+          className="sidebar-backdrop"
+          onClick={() => setMobileOpen(false)}
+          aria-label="Close navigation"
+        />
+      )}
       <div className="main-area">
         <header className="topbar">
           <button
             className="icon-button menu-button"
             onClick={() => setMobileOpen(true)}
+            aria-label="Open navigation"
+            aria-expanded={mobileOpen}
+            aria-controls="primary-navigation"
           >
             <Menu size={20} />
           </button>
