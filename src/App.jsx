@@ -46,6 +46,7 @@ import {
   Zap,
 } from "lucide-react";
 import "./App.css";
+import "./ui-polish.css";
 
 const seedRules = [
   {
@@ -290,10 +291,13 @@ function Login({ onLogin }) {
           <button className="primary-button login-button" type="submit">
             Sign in to console <ArrowUp size={16} />
           </button>
+          <p className="demo-note">
+            Demo only: any non-empty email address and password will work.
+          </p>
         </form>
         <div className="login-footer">
           <span>
-            <LockKeyhole size={14} /> End-to-end session security
+            <LockKeyhole size={14} /> Browser-only demo session
           </span>
           <span>v1.0.0 / SIMULATION</span>
         </div>
@@ -309,9 +313,9 @@ function Login({ onLogin }) {
             Understand every risk.
           </h2>
           <div className="aside-metric">
-            <span>POLICIES MONITORED</span>
-            <strong>128</strong>
-            <small>+12.4% this month</small>
+            <span>LOCAL SIMULATION</span>
+            <strong>Explore safely</strong>
+            <small>Changes stay in this browser</small>
           </div>
         </div>
       </div>
@@ -386,7 +390,7 @@ function DashboardShell({ onLogout, rules, setRules, logs, addLog, notify }) {
             <span className="live-dot" />
             <div>
               <strong>All systems normal</strong>
-              <small>Last sync 2m ago</small>
+              <small>Browser storage only</small>
             </div>
           </div>
           <div className="profile">
@@ -418,7 +422,7 @@ function DashboardShell({ onLogout, rules, setRules, logs, addLog, notify }) {
           <div className="topbar-actions">
             <div className="connection">
               <span className="live-dot" />
-              Secure connection
+              Local simulation
             </div>
             <button
               className="icon-button notification"
