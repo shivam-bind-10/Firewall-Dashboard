@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   BrowserRouter,
   NavLink,
@@ -13,6 +13,7 @@ import {
   Activity,
   AlertTriangle,
   ArrowUp,
+  ArrowUpDown,
   BookOpen,
   Bell,
   Check,
@@ -42,11 +43,13 @@ import {
   ShieldAlert,
   ShieldCheck,
   SlidersHorizontal,
+  Upload,
   X,
   Zap,
 } from "lucide-react";
 import "./App.css";
 import "./ui-polish.css";
+import "./dashboard-design.css";
 
 const seedRules = [
   {
@@ -401,7 +404,7 @@ function DashboardShell({ onLogout, rules, setRules, logs, addLog, notify }) {
           <div className="status-line">
             <span className="live-dot" />
             <div>
-              <strong>All systems normal</strong>
+              <strong>Simulation ready</strong>
               <small>Browser storage only</small>
             </div>
           </div>
@@ -453,7 +456,7 @@ function DashboardShell({ onLogout, rules, setRules, logs, addLog, notify }) {
               title="Review security signals"
             >
               <Bell size={18} />
-              <i />
+              {analysisFindingCount > 0 && <i />}
             </button>
             <div className="top-profile">
               <div className="avatar">SB</div>
@@ -535,21 +538,21 @@ function Dashboard({ stats, rules, logs }) {
         <Stat
           label="Active rules"
           value={stats.active}
-          detail="Currently enforcing"
+          detail="Enabled in simulation"
           icon={Zap}
           tone="green"
         />
         <Stat
           label="Allow rules"
           value={stats.allow}
-          detail="Traffic permitted"
+          detail="Marked to allow"
           icon={Check}
           tone="cyan"
         />
         <Stat
           label="Deny rules"
           value={stats.deny}
-          detail="Traffic blocked"
+          detail="Marked to deny"
           icon={ShieldAlert}
           tone="red"
         />
@@ -668,9 +671,12 @@ function Dashboard({ stats, rules, logs }) {
 
 function Rules({ rules, setRules, addLog, notify }) {
   const navigate = useNavigate();
+  const importInput = useRef(null);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("ALL");
   const [view, setView] = useState("table");
+  const [sort, setSort] = useState("priority-asc");
+  const [selectedIds, setSelectedIds] = useState([]);
   const [confirm, setConfirm] = useState(null);
   const activeFilterCount = Number(filter !== "ALL") + Number(Boolean(query));
   const filtered = rules.filter(
@@ -684,6 +690,30 @@ function Rules({ rules, setRules, addLog, notify }) {
         rule.action === filter ||
         rule.protocol === filter),
   );
+  const sorted = [...filtered].sort((first, second) => {
+    if (sort === "priority-desc")
+      return Number(second.priority) - Number(first.priority);
+    if (sort === "newest")
+      return new Date(second.created).getTime() - new Date(first.created).getTime();
+    return Number(first.priority) - Number(second.priority);
+  });
+  const visibleIds = sorted.map((rule) => rule.id);
+  const allVisibleSelected =
+    visibleIds.length > 0 && visibleIds.every((id) => selectedIds.includes(id));
+  const toggleRuleSelection = (id) => {
+    setSelectedIds((current) =>
+      current.includes(id)
+        ? current.filter((selectedId) => selectedId !== id)
+        : [...current, id],
+    );
+  };
+  const toggleVisibleSelection = () => {
+    setSelectedIds((current) =>
+      allVisibleSelected
+        ? current.filter((id) => !visibleIds.includes(id))
+        : [...new Set([...current, ...visibleIds])],
+    );
+  };
   const changeStatus = (rule, status) => {
     setRules(
       rules.map((item) => (item.id === rule.id ? { ...item, status } : item)),
@@ -695,26 +725,141 @@ function Rules({ rules, setRules, addLog, notify }) {
     );
     notify(`Rule ${status === "ENABLED" ? "enabled" : "disabled"}.`);
   };
+  const duplicateRule = (rule) => {
+    const duplicate = {
+      ...rule,
+      id: nextRuleId(rules),
+      description: `${rule.description} (copy)`,
+      created: new Date().toISOString(),
+    };
+    setRules([duplicate, ...rules]);
+    addLog("DUPLICATE_RULE", duplicate.id, `Duplicated policy ${rule.id}.`);
+    notify(`Created a copy of ${rule.id}.`);
+  };
+  const changeSelectedStatus = (status) => {
+    const selected = new Set(selectedIds);
+    const changedCount = rules.filter(
+      (rule) => selected.has(rule.id) && rule.status !== status,
+    ).length;
+    if (!changedCount) {
+      notify(`Selected rules are already ${status.toLowerCase()}.`);
+      return;
+    }
+    setRules(
+      rules.map((rule) =>
+        selected.has(rule.id) ? { ...rule, status } : rule,
+      ),
+    );
+    addLog(
+      status === "ENABLED" ? "BULK_ENABLE_RULES" : "BULK_DISABLE_RULES",
+      `${changedCount} rules`,
+      `${status === "ENABLED" ? "Enabled" : "Disabled"} ${changedCount} selected policies.`,
+    );
+    notify(`${changedCount} rules ${status === "ENABLED" ? "enabled" : "disabled"}.`);
+  };
   const deleteRule = () => {
-    setRules(rules.filter((rule) => rule.id !== confirm.id));
-    addLog("DELETE_RULE", confirm.id, "Deleted firewall policy.");
-    notify("Firewall rule deleted successfully.");
+    if (confirm.scope === "selected") {
+      const selected = new Set(confirm.ids);
+      setRules(rules.filter((rule) => !selected.has(rule.id)));
+      setSelectedIds((current) =>
+        current.filter((id) => !selected.has(id)),
+      );
+      addLog(
+        "BULK_DELETE_RULES",
+        `${confirm.ids.length} rules`,
+        `Deleted ${confirm.ids.length} selected policies.`,
+      );
+      notify(`${confirm.ids.length} rules deleted.`);
+    } else {
+      setRules(rules.filter((rule) => rule.id !== confirm.rule.id));
+      setSelectedIds((current) =>
+        current.filter((id) => id !== confirm.rule.id),
+      );
+      addLog("DELETE_RULE", confirm.rule.id, "Deleted firewall policy.");
+      notify("Firewall rule deleted successfully.");
+    }
     setConfirm(null);
+  };
+  const exportRules = () => {
+    const content = JSON.stringify(
+      { exportedAt: new Date().toISOString(), rules },
+      null,
+      2,
+    );
+    downloadFile(content, "application/json", "firewall-rules.json");
+    addLog("EXPORT_RULES", `${rules.length} rules`, "Exported firewall policies as JSON.");
+    notify(`Exported ${rules.length} firewall rules.`);
+  };
+  const importRules = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      const data = JSON.parse(await file.text());
+      const incoming = Array.isArray(data) ? data : data?.rules;
+      if (!Array.isArray(incoming) || incoming.length === 0)
+        throw new Error("The file must contain a non-empty rules array.");
+      const invalidIndex = incoming.findIndex((rule) => !isValidImportedRule(rule));
+      if (invalidIndex !== -1)
+        throw new Error(`Rule ${invalidIndex + 1} has invalid or missing fields.`);
+      const imported = [];
+      for (const rule of incoming) {
+        const id = nextRuleId([...rules, ...imported]);
+        imported.push({
+          ...rule,
+          id,
+          created:
+            typeof rule.created === "string" && !Number.isNaN(Date.parse(rule.created))
+              ? rule.created
+              : new Date().toISOString(),
+        });
+      }
+      setRules([...imported, ...rules]);
+      addLog("IMPORT_RULES", `${imported.length} rules`, "Imported firewall policies from JSON.");
+      notify(`Imported ${imported.length} firewall rules.`);
+    } catch (error) {
+      notify(
+        `Import failed: ${error instanceof Error ? error.message : "Unable to read this file."}`,
+        "error",
+      );
+    } finally {
+      event.target.value = "";
+    }
   };
   return (
     <>
       <PageIntro
         eyebrow="POLICY MANAGEMENT"
         title="Firewall Rules"
-        subtitle="Manage and monitor simulated firewall policies"
+        subtitle="Review, organize, and update your browser-based policy set."
         action={
-          <button
-            className="primary-button"
-            onClick={() => navigate("/rules/create")}
-          >
-            <Plus size={17} />
-            Create rule
-          </button>
+          <div className="rule-header-actions">
+            <button className="secondary-button" onClick={exportRules}>
+              <Download size={16} />
+              Export JSON
+            </button>
+            <button
+              className="secondary-button"
+              onClick={() => importInput.current?.click()}
+            >
+              <Upload size={16} />
+              Import JSON
+            </button>
+            <input
+              ref={importInput}
+              className="visually-hidden"
+              type="file"
+              accept=".json,application/json"
+              onChange={importRules}
+              aria-label="Import firewall rules from JSON"
+            />
+            <button
+              className="primary-button"
+              onClick={() => navigate("/rules/create")}
+            >
+              <Plus size={17} />
+              Create rule
+            </button>
+          </div>
         }
       />
       <div className="rule-toolbar">
@@ -736,15 +881,32 @@ function Rules({ rules, setRules, addLog, notify }) {
           <Filter size={16} />
           Clear filters <span className="filter-count">{activeFilterCount}</span>
         </button>
+        <label className="sort-control">
+          <ArrowUpDown size={16} />
+          <span className="visually-hidden">Sort rules</span>
+          <select
+            value={sort}
+            onChange={(event) => setSort(event.target.value)}
+            aria-label="Sort firewall rules"
+          >
+            <option value="priority-asc">Priority: low to high</option>
+            <option value="priority-desc">Priority: high to low</option>
+            <option value="newest">Recently created</option>
+          </select>
+        </label>
         <div className="view-toggle">
           <button
             className={view === "table" ? "selected" : ""}
+            aria-label="Table view"
+            aria-pressed={view === "table"}
             onClick={() => setView("table")}
           >
             <List size={17} />
           </button>
           <button
             className={view === "grid" ? "selected" : ""}
+            aria-label="Card view"
+            aria-pressed={view === "grid"}
             onClick={() => setView("grid")}
           >
             <Grid2X2 size={17} />
@@ -761,6 +923,7 @@ function Rules({ rules, setRules, addLog, notify }) {
           "TCP",
           "UDP",
           "ICMP",
+          "ANY",
         ].map((item) => (
           <button
             className={filter === item ? "selected" : ""}
@@ -773,37 +936,97 @@ function Rules({ rules, setRules, addLog, notify }) {
           </button>
         ))}
       </div>
+      {selectedIds.length > 0 && (
+        <div className="bulk-toolbar" role="region" aria-label="Bulk rule actions">
+          <strong>{selectedIds.length} selected</strong>
+          <button
+            className="secondary-button"
+            onClick={() => changeSelectedStatus("ENABLED")}
+          >
+            <Zap size={15} /> Enable
+          </button>
+          <button
+            className="secondary-button"
+            onClick={() => changeSelectedStatus("DISABLED")}
+          >
+            <Zap size={15} /> Disable
+          </button>
+          <button
+            className="danger-button"
+            onClick={() => setConfirm({ scope: "selected", ids: selectedIds })}
+          >
+            <X size={15} /> Delete
+          </button>
+          <button
+            className="ghost-button"
+            onClick={() => setSelectedIds([])}
+          >
+            Clear selection
+          </button>
+        </div>
+      )}
       {view === "table" ? (
         <section className="panel table-panel full-table">
           <PanelHead
-            title={`${filtered.length} polic${filtered.length === 1 ? "y" : "ies"}`}
+            title={`${sorted.length} polic${sorted.length === 1 ? "y" : "ies"}`}
             meta={
               <span className="muted-label">
-                <span className="live-dot" />
-                Live policy store
+                {rules.length} total policies
               </span>
             }
           />
           <RuleTable
-            rules={filtered}
+            rules={sorted}
+            selectedIds={selectedIds}
+            allVisibleSelected={allVisibleSelected}
+            onToggleAll={toggleVisibleSelection}
+            onToggleSelection={toggleRuleSelection}
             onEdit={(rule) => navigate(`/rules/${rule.id}/edit`)}
-            onDelete={setConfirm}
+            onDelete={(rule) => setConfirm({ scope: "single", rule })}
+            onDuplicate={duplicateRule}
             onStatus={changeStatus}
           />
         </section>
       ) : (
         <div className="rule-cards">
-          {filtered.map((rule) => (
-            <RuleCard key={rule.id} rule={rule} />
+          {sorted.map((rule) => (
+            <RuleCard
+              key={rule.id}
+              rule={rule}
+              selected={selectedIds.includes(rule.id)}
+              onSelect={() => toggleRuleSelection(rule.id)}
+              onEdit={() => navigate(`/rules/${rule.id}/edit`)}
+              onDuplicate={() => duplicateRule(rule)}
+              onDelete={() => setConfirm({ scope: "single", rule })}
+              onStatus={(status) => changeStatus(rule, status)}
+            />
           ))}
+          {!sorted.length && (
+            <EmptyState
+              icon={Search}
+              title="No matching rules"
+              text="Try another search or clear the active filter."
+            />
+          )}
         </div>
       )}
       {confirm && (
         <ConfirmModal
-          title="Delete firewall rule?"
-          text={`Are you sure you want to delete ${confirm.id}? This action cannot be undone.`}
+          title={
+            confirm.scope === "selected"
+              ? `Delete ${confirm.ids.length} firewall rules?`
+              : "Delete firewall rule?"
+          }
+          text={
+            confirm.scope === "selected"
+              ? "This permanently removes the selected policies from this browser."
+              : `Are you sure you want to delete ${confirm.rule.id}? This action cannot be undone.`
+          }
           onCancel={() => setConfirm(null)}
           onConfirm={deleteRule}
+          confirmLabel={
+            confirm.scope === "selected" ? "Delete selected" : "Delete rule"
+          }
         />
       )}
     </>
@@ -842,9 +1065,9 @@ function RuleEditor({ rules, setRules, addLog, notify }) {
         "Complete all required fields before saving this policy.",
       );
     if (!isValidNetworkAddress(form.source) || !isValidNetworkAddress(form.destination))
-      return setError("Enter a valid IPv4 address, CIDR range, or ANY.");
+      return setError("Enter a valid IPv4 or IPv6 address, CIDR range, or ANY.");
     if (!isValidPort(form.sourcePort) || !isValidPort(form.destinationPort))
-      return setError("Ports must be ANY or whole numbers between 0 and 65535.");
+      return setError("Ports must be ANY, a port from 0 to 65535, or a valid range.");
     if (!Number.isInteger(Number(form.priority)) || Number(form.priority) < 1)
       return setError("Priority must be a whole number greater than zero.");
     if (editing) {
@@ -891,14 +1114,14 @@ function RuleEditor({ rules, setRules, addLog, notify }) {
               required
               value={form.source}
               onChange={(v) => update("source", v)}
-              placeholder="192.168.1.10 or ANY"
+              placeholder="192.168.1.10, CIDR, IPv6, or ANY"
             />
             <Field
               label="Destination IP address"
               required
               value={form.destination}
               onChange={(v) => update("destination", v)}
-              placeholder="10.0.0.20 or ANY"
+              placeholder="10.0.0.20, CIDR, IPv6, or ANY"
             />
             <SelectField
               label="Protocol"
@@ -910,14 +1133,14 @@ function RuleEditor({ rules, setRules, addLog, notify }) {
               label="Source port"
               value={form.sourcePort}
               onChange={(v) => update("sourcePort", v)}
-              placeholder="ANY"
+              placeholder="ANY or 8000-8100"
             />
             <Field
               label="Destination port"
               required
               value={form.destinationPort}
               onChange={(v) => update("destinationPort", v)}
-              placeholder="443"
+              placeholder="443 or 8000-8100"
             />
           </div>
           <div className="form-section-title section-two">
@@ -1195,6 +1418,20 @@ function Analysis({ rules }) {
 function AuditLogs({ logs }) {
   const [query, setQuery] = useState("");
   const [actionFilter, setActionFilter] = useState("ALL");
+  const now = new Date();
+  const monthLogs = logs.filter((log) => {
+    const time = new Date(log.time);
+    return (
+      time.getFullYear() === now.getFullYear() &&
+      time.getMonth() === now.getMonth()
+    );
+  });
+  const successfulLogs = logs.filter(
+    (log) => log.status === "SUCCESS" || log.status === "COMPLETED",
+  ).length;
+  const successRate = logs.length
+    ? Math.round((successfulLogs / logs.length) * 100)
+    : 0;
   const visible = logs.filter(
     (log) =>
       Object.values(log).join(" ").toLowerCase().includes(query.toLowerCase()) &&
@@ -1232,22 +1469,22 @@ function AuditLogs({ logs }) {
       <div className="audit-summary">
         <Stat
           label="Events this month"
-          value={logs.length + 42}
-          detail="+8.4% from last month"
+          value={monthLogs.length}
+          detail="Recorded in this browser"
           icon={Activity}
           tone="blue"
         />
         <Stat
           label="Successful actions"
-          value="98.2%"
-          detail="Healthy activity rate"
+          value={`${successRate}%`}
+          detail={`${successfulLogs} of ${logs.length} recorded events`}
           icon={Check}
           tone="green"
         />
         <Stat
           label="Active session"
-          value="01:42:18"
-          detail="Shivam Bind"
+          value="DEMO"
+          detail="Browser-only session"
           icon={Clock3}
           tone="cyan"
         />
@@ -1371,9 +1608,8 @@ function Settings() {
                 <Server size={15} />
                 API status
               </span>
-              <strong className="green-text">
-                <span className="live-dot" />
-                Mock service
+              <strong>
+                No API connection
               </strong>
             </div>
             <div>
@@ -1403,13 +1639,13 @@ function Settings() {
               Frontend<strong>React + Vite</strong>
             </span>
             <span>
-              Backend<strong>Ready for Node.js API</strong>
+              Backend<strong>Not connected (simulation)</strong>
             </span>
             <span>
-              Database<strong>MongoDB integration ready</strong>
+              Database<strong>Browser localStorage</strong>
             </span>
             <span>
-              Environment<strong>Simulation / Development</strong>
+              Environment<strong>Local browser simulation</strong>
             </span>
           </div>
         </section>
@@ -1498,17 +1734,39 @@ function StatusBadge({ value }) {
     </span>
   );
 }
-function RuleTable({ rules, compact = false, onEdit, onDelete, onStatus }) {
+function RuleTable({
+  rules,
+  compact = false,
+  selectedIds = [],
+  allVisibleSelected = false,
+  onToggleAll,
+  onToggleSelection,
+  onEdit,
+  onDelete,
+  onDuplicate,
+  onStatus,
+}) {
   return (
     <div className="table-scroll">
       <table>
         <thead>
           <tr>
+            {!compact && (
+              <th>
+                <input
+                  type="checkbox"
+                  checked={allVisibleSelected}
+                  onChange={onToggleAll}
+                  aria-label="Select all visible firewall rules"
+                />
+              </th>
+            )}
             <th>Rule ID</th>
             <th>Source</th>
             <th>Destination</th>
             <th>Protocol</th>
-            <th>Port</th>
+            {!compact && <th>Source port</th>}
+            <th>Destination port</th>
             <th>Action</th>
             <th>Priority</th>
             <th>Status</th>
@@ -1520,6 +1778,16 @@ function RuleTable({ rules, compact = false, onEdit, onDelete, onStatus }) {
         <tbody>
           {rules.map((rule) => (
             <tr key={rule.id}>
+              {!compact && (
+                <td>
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.includes(rule.id)}
+                    onChange={() => onToggleSelection(rule.id)}
+                    aria-label={`Select ${rule.id}`}
+                  />
+                </td>
+              )}
               <td>
                 <strong className="rule-id">{rule.id}</strong>
               </td>
@@ -1528,6 +1796,7 @@ function RuleTable({ rules, compact = false, onEdit, onDelete, onStatus }) {
               <td>
                 <span className="protocol">{rule.protocol}</span>
               </td>
+              {!compact && <td className="mono">{rule.sourcePort}</td>}
               <td className="mono">{rule.destinationPort}</td>
               <td>
                 <span className={`action-badge ${rule.action.toLowerCase()}`}>
@@ -1547,7 +1816,11 @@ function RuleTable({ rules, compact = false, onEdit, onDelete, onStatus }) {
               {!compact && (
                 <td>
                   <div className="row-actions">
-                    <button onClick={() => onEdit(rule)}>
+                    <button
+                      onClick={() => onEdit(rule)}
+                      aria-label={`Edit ${rule.id}`}
+                      title="Edit rule"
+                    >
                       <Edit3 size={15} />
                     </button>
                     <button
@@ -1557,10 +1830,23 @@ function RuleTable({ rules, compact = false, onEdit, onDelete, onStatus }) {
                           rule.status === "ENABLED" ? "DISABLED" : "ENABLED",
                         )
                       }
+                      aria-label={`${rule.status === "ENABLED" ? "Disable" : "Enable"} ${rule.id}`}
+                      title={rule.status === "ENABLED" ? "Disable rule" : "Enable rule"}
                     >
                       <Zap size={15} />
                     </button>
-                    <button onClick={() => onDelete(rule)}>
+                    <button
+                      onClick={() => onDuplicate(rule)}
+                      aria-label={`Duplicate ${rule.id}`}
+                      title="Duplicate rule"
+                    >
+                      <Copy size={15} />
+                    </button>
+                    <button
+                      onClick={() => onDelete(rule)}
+                      aria-label={`Delete ${rule.id}`}
+                      title="Delete rule"
+                    >
                       <span className="danger-icon">×</span>
                     </button>
                   </div>
@@ -1580,10 +1866,18 @@ function RuleTable({ rules, compact = false, onEdit, onDelete, onStatus }) {
     </div>
   );
 }
-function RuleCard({ rule }) {
+function RuleCard({
+  rule,
+  selected,
+  onSelect,
+  onEdit,
+  onDuplicate,
+  onDelete,
+  onStatus,
+}) {
   return (
     <div className="rule-card">
-      <div>
+      <div className="rule-card-head">
         <strong>{rule.id}</strong>
         <StatusBadge value={rule.status} />
       </div>
@@ -1591,12 +1885,33 @@ function RuleCard({ rule }) {
         {rule.source} <ArrowUp size={15} /> {rule.destination}
       </h3>
       <p>{rule.description}</p>
-      <div>
+      <div className="rule-card-meta">
         <span>{rule.protocol}</span>
-        <span>Port {rule.destinationPort}</span>
+        <span>{rule.sourcePort} → {rule.destinationPort}</span>
         <span className={`action-badge ${rule.action.toLowerCase()}`}>
           {rule.action}
         </span>
+      </div>
+      <label className="rule-card-select">
+        <input type="checkbox" checked={selected} onChange={onSelect} />
+        Select rule
+      </label>
+      <div className="rule-card-actions">
+        <button className="secondary-button" onClick={onEdit}>
+          <Edit3 size={14} /> Edit
+        </button>
+        <button
+          className="secondary-button"
+          onClick={() => onStatus(rule.status === "ENABLED" ? "DISABLED" : "ENABLED")}
+        >
+          <Zap size={14} /> {rule.status === "ENABLED" ? "Disable" : "Enable"}
+        </button>
+        <button className="icon-button" onClick={onDuplicate} aria-label={`Duplicate ${rule.id}`}>
+          <Copy size={15} />
+        </button>
+        <button className="icon-button" onClick={onDelete} aria-label={`Delete ${rule.id}`}>
+          <X size={15} />
+        </button>
       </div>
     </div>
   );
@@ -1656,35 +1971,51 @@ function EmptyState({ icon: Icon, title, text }) {
     </div>
   );
 }
-function ConfirmModal({ title, text, onCancel, onConfirm }) {
+function ConfirmModal({
+  title,
+  text,
+  onCancel,
+  onConfirm,
+  confirmLabel = "Delete rule",
+}) {
   return (
     <div className="modal-backdrop">
-      <div className="confirm-modal">
+      <div className="confirm-modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
         <div className="modal-icon">
           <AlertTriangle size={22} />
         </div>
-        <h2>{title}</h2>
+        <h2 id="confirm-title">{title}</h2>
         <p>{text}</p>
         <div>
           <button className="secondary-button" onClick={onCancel}>
             Cancel
           </button>
           <button className="danger-button" onClick={onConfirm}>
-            Delete rule
+            {confirmLabel}
           </button>
         </div>
       </div>
     </div>
   );
 }
-function Toast({ message, onClose }) {
+function Toast({ message, type = "success", onClose }) {
   return (
-    <div className="toast">
-      <Check size={16} />
+    <div className={`toast ${type}`} role="status" aria-live="polite">
+      {type === "error" ? <AlertTriangle size={16} /> : <Check size={16} />}
       <span>{message}</span>
       <button onClick={onClose}>×</button>
     </div>
   );
+}
+function downloadFile(content, type, filename) {
+  const url = URL.createObjectURL(new Blob([content], { type }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 function analyze(rules) {
   const signatures = new Set();
@@ -1741,20 +2072,55 @@ function analyze(rules) {
 }
 function isValidPort(value) {
   if (String(value).toUpperCase() === "ANY") return true;
-  if (!/^\d+$/.test(String(value))) return false;
-  const port = Number(value);
-  return port >= 0 && port <= 65535;
+  const match = /^(\d+)(?:-(\d+))?$/.exec(String(value));
+  if (!match) return false;
+  const start = Number(match[1]);
+  const end = match[2] === undefined ? start : Number(match[2]);
+  return start >= 0 && end <= 65535 && start <= end;
 }
 function isValidNetworkAddress(value) {
   if (String(value).toUpperCase() === "ANY") return true;
   const [address, prefix, ...extra] = String(value).split("/");
   if (extra.length) return false;
+  if (address.includes(":")) {
+    if (
+      prefix !== undefined &&
+      (!/^\d{1,3}$/.test(prefix) || Number(prefix) > 128)
+    )
+      return false;
+    try {
+      return new URL(`http://[${address}]/`).hostname.startsWith("[");
+    } catch {
+      return false;
+    }
+  }
   const octets = address.split(".");
   if (
     octets.length !== 4 ||
     octets.some((octet) => !/^\d{1,3}$/.test(octet) || Number(octet) > 255)
   ) return false;
   return prefix === undefined || (/^\d{1,2}$/.test(prefix) && Number(prefix) <= 32);
+}
+function isValidImportedRule(rule) {
+  return (
+    rule !== null &&
+    typeof rule === "object" &&
+    typeof rule.source === "string" &&
+    isValidNetworkAddress(rule.source) &&
+    typeof rule.destination === "string" &&
+    isValidNetworkAddress(rule.destination) &&
+    ["TCP", "UDP", "ICMP", "ANY"].includes(rule.protocol) &&
+    typeof rule.sourcePort === "string" &&
+    isValidPort(rule.sourcePort) &&
+    typeof rule.destinationPort === "string" &&
+    isValidPort(rule.destinationPort) &&
+    ["ALLOW", "DENY"].includes(rule.action) &&
+    Number.isInteger(Number(rule.priority)) &&
+    Number(rule.priority) > 0 &&
+    ["ENABLED", "DISABLED"].includes(rule.status) &&
+    typeof rule.description === "string" &&
+    Boolean(rule.description.trim())
+  );
 }
 function nextRuleId(rules) {
   const highestId = rules.reduce((highest, rule) => {

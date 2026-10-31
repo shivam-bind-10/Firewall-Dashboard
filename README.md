@@ -18,13 +18,20 @@ Open the local URL printed by Vite. Sign in with any non-empty email address and
 
 ## Features
 
-- Overview of policy counts, protocol mix, audit activity, and security signals.
-- Create, edit, enable, disable, search, filter, and delete firewall rules.
-- Analyze duplicate definitions, opposing actions, broad allow rules, and invalid rule data.
-- Search and filter audit events, then export the visible results as CSV.
-- Responsive table and card views for policy review.
+- Overview of policy counts, protocol mix, recent audit activity, and rule-analysis signals.
+- Create, edit, duplicate, enable, disable, and delete rules, individually or in bulk.
+- Search and filter by status, action, protocol, and rule fields; sort by priority or creation date.
+- Validate IPv4/IPv6 addresses, CIDR prefixes, ports, and port ranges.
+- Import and export policy sets as JSON. Imports are validated and receive new rule IDs.
+- Analyze duplicate definitions, opposing actions, broad allow rules, and invalid policy data.
+- Search and filter audit events, then export the visible events as CSV.
+- Responsive table and card views, including a mobile navigation drawer.
 
-Rules and audit events are stored in the browser's `localStorage` and remain on that browser. Clearing site data resets the sample data. No information is sent to a server.
+Rules and audit events are stored in this browser's `localStorage`. Clearing site data resets the sample data. Policy data is not sent to a backend.
+
+## Simulation boundary
+
+Sentinel is a frontend demonstration, not an operating-system firewall controller. Rule changes update only the browser's local data. The project does not authenticate real users, enforce traffic, connect to a firewall appliance, or provide a backend/API. Priorities and analysis findings are for demonstration and review only.
 
 ## Validation
 
