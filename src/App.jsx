@@ -167,6 +167,17 @@ const navItems = [
   { to: "/analysis", label: "Rule Analysis", icon: Activity },
   { to: "/audit-logs", label: "Audit Logs", icon: BookOpen },
 ];
+const ruleFilters = [
+  "ALL",
+  "ENABLED",
+  "DISABLED",
+  "ALLOW",
+  "DENY",
+  "TCP",
+  "UDP",
+  "ICMP",
+  "ANY",
+];
 
 function App() {
   const [authenticated, setAuthenticated] = useState(
@@ -589,6 +600,7 @@ function Dashboard({ stats, rules, logs }) {
           detail="Across all policies"
           icon={Shield}
           tone="blue"
+          to="/rules?filter=ALL"
         />
         <Stat
           label="Active rules"
@@ -596,6 +608,7 @@ function Dashboard({ stats, rules, logs }) {
           detail="Enabled in simulation"
           icon={Zap}
           tone="green"
+          to="/rules?filter=ENABLED"
         />
         <Stat
           label="Allow rules"
@@ -603,6 +616,7 @@ function Dashboard({ stats, rules, logs }) {
           detail="Marked to allow"
           icon={Check}
           tone="cyan"
+          to="/rules?filter=ALLOW"
         />
         <Stat
           label="Deny rules"
@@ -610,6 +624,7 @@ function Dashboard({ stats, rules, logs }) {
           detail="Marked to deny"
           icon={ShieldAlert}
           tone="red"
+          to="/rules?filter=DENY"
         />
         <Stat
           label="Risk signals"
@@ -617,6 +632,7 @@ function Dashboard({ stats, rules, logs }) {
           detail="Need attention"
           icon={AlertTriangle}
           tone="amber"
+          to="/analysis"
         />
       </div>
       <div className="dashboard-grid">
@@ -726,9 +742,13 @@ function Dashboard({ stats, rules, logs }) {
 
 function Rules({ rules, setRules, addLog, notify }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const importInput = useRef(null);
   const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState("ALL");
+  const [filter, setFilter] = useState(() => {
+    const requestedFilter = new URLSearchParams(location.search).get("filter");
+    return ruleFilters.includes(requestedFilter) ? requestedFilter : "ALL";
+  });
   const [view, setView] = useState("table");
   const [sort, setSort] = useState("priority-asc");
   const [selectedIds, setSelectedIds] = useState([]);
@@ -969,17 +989,7 @@ function Rules({ rules, setRules, addLog, notify }) {
         </div>
       </div>
       <div className="filter-tabs">
-        {[
-          "ALL",
-          "ENABLED",
-          "DISABLED",
-          "ALLOW",
-          "DENY",
-          "TCP",
-          "UDP",
-          "ICMP",
-          "ANY",
-        ].map((item) => (
+        {ruleFilters.map((item) => (
           <button
             className={filter === item ? "selected" : ""}
             onClick={() => setFilter(item)}
@@ -1819,9 +1829,9 @@ function PanelHead({ title, meta }) {
     </div>
   );
 }
-function Stat({ label, value, detail, icon: Icon, tone }) {
-  return (
-    <div className="stat-card">
+function Stat({ label, value, detail, icon: Icon, tone, to }) {
+  const content = (
+    <>
       <div className={`stat-icon ${tone}`}>
         <Icon size={17} />
       </div>
@@ -1830,7 +1840,18 @@ function Stat({ label, value, detail, icon: Icon, tone }) {
         <strong>{value}</strong>
         <small>{detail}</small>
       </div>
-    </div>
+    </>
+  );
+  return to ? (
+    <NavLink
+      className="stat-card stat-card-link"
+      to={to}
+      aria-label={`${label}: ${value}. ${detail}`}
+    >
+      {content}
+    </NavLink>
+  ) : (
+    <div className="stat-card">{content}</div>
   );
 }
 function Legend({ label, value, color }) {
