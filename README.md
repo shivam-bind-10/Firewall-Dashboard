@@ -23,7 +23,7 @@ Open the local URL printed by Vite. Sign in with any non-empty email address and
 - Search and filter by status, action, protocol, and rule fields; sort by priority or creation date.
 - Validate IPv4/IPv6 addresses, CIDR prefixes, ports, and port ranges.
 - Import and export policy sets as JSON. Imports are validated and receive new rule IDs.
-- Analyze duplicate definitions, opposing actions, broad allow rules, and invalid policy data.
+- Analyze duplicate definitions, conflicting actions, broad allow scopes, and invalid policy data; findings include affected-rule links, specific reasons, recommendations, and severity filters.
 - Search and filter audit events, then export the visible events as CSV.
 - Responsive table and card views, including a mobile navigation drawer.
 

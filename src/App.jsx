@@ -532,7 +532,7 @@ function DashboardShell({
             />
             <Route
               path="/analysis"
-              element={<Analysis rules={rules} notify={notify} />}
+              element={<Analysis rules={rules} notify={notify} addLog={addLog} />}
             />
             <Route path="/audit-logs" element={<AuditLogs logs={logs} />} />
             <Route
@@ -723,7 +723,7 @@ function Dashboard({ stats, rules, logs }) {
           <AlertRow
             icon={FileWarning}
             title={alerts.risky.length ? "Broad policy requires review" : "No broad allow policies"}
-            text={alerts.risky.length ? `${alerts.risky[0].id} allows a broad traffic scope` : "No permissive broad-scope rules found"}
+            text={alerts.risky.length ? `${alerts.risky[0].rule.id} allows a broad traffic scope` : "No permissive broad-scope rules found"}
             tone="red"
             count={alerts.risky.length}
           />
@@ -1326,49 +1326,64 @@ function RuleEditor({ rules, setRules, addLog, notify }) {
   );
 }
 
-function Analysis({ rules, notify }) {
+function Analysis({ rules, notify, addLog }) {
   const result = analyze(rules);
   const [lastRun, setLastRun] = useState(new Date());
+  const [severityFilter, setSeverityFilter] = useState("ALL");
   const findings = [
-    ...result.risky.map((rule) => ({
-      key: `risky-${rule.id}`,
+    ...result.risky.map(({ rule, reasons, recommendation, level }, index) => ({
+      key: `risky-${rule.id}-${index}`,
       icon: AlertTriangle,
       title: "Overly broad allow policy",
-      text: `${rule.id} allows broad traffic. Restrict its source, destination, or port scope.`,
+      text: `${rule.id} ${rule.status === "DISABLED" ? "is currently disabled but" : ""} allows traffic with broad scope: ${reasons.join(", ")}.`,
+      recommendation,
+      relatedRules: [rule],
       tone: "amber",
-      level: "HIGH",
+      level,
     })),
-    ...result.duplicates.map((rule) => ({
-      key: `duplicate-${rule.id}`,
+    ...result.duplicates.map(({ rule, original }, index) => ({
+      key: `duplicate-${rule.id}-${original.id}-${index}`,
       icon: Copy,
       title: "Duplicate rule detected",
-      text: `${rule.id} duplicates an earlier traffic definition.`,
+      text: `${rule.id} repeats ${original.id}'s traffic match and ${rule.action} action: ${describeRuleMatch(rule)}.`,
+      recommendation: "Keep one definition or change the traffic match so each rule has a distinct purpose.",
+      relatedRules: [original, rule],
       tone: "amber",
       level: "MEDIUM",
     })),
-    ...result.conflicts.map(({ first, second }) => ({
-      key: `conflict-${first.id}-${second.id}`,
+    ...result.conflicts.map(({ first, second }, index) => ({
+      key: `conflict-${first.id}-${second.id}-${index}`,
       icon: Network,
       title: "Conflicting actions",
-      text: `${first.id} and ${second.id} match the same traffic with different actions.`,
+      text: `${first.id} (${first.action}, priority ${first.priority}) and ${second.id} (${second.action}, priority ${second.priority}) match the same traffic: ${describeRuleMatch(first)}.`,
+      recommendation: "Review the intended action and priority, then remove or update the policy that should not apply.",
+      relatedRules: [first, second],
       tone: "red",
       level: "HIGH",
     })),
-    ...result.invalid.map((rule) => ({
-      key: `invalid-${rule.id}`,
+    ...result.invalid.map(({ rule, errors }, index) => ({
+      key: `invalid-${rule.id}-${index}`,
       icon: FileWarning,
       title: "Invalid rule data",
-      text: `${rule.id} contains an invalid address, port, or priority.`,
+      text: `${rule.id}: ${errors.join("; ")}.`,
+      recommendation: "Edit this rule and correct the listed fields before relying on the policy.",
+      relatedRules: [rule],
       tone: "red",
       level: "HIGH",
     })),
-  ];
+  ].sort((first, second) =>
+    first.level === second.level ? 0 : first.level === "HIGH" ? -1 : 1,
+  );
+  const visibleFindings =
+    severityFilter === "ALL"
+      ? findings
+      : findings.filter((finding) => finding.level === severityFilter);
   const flaggedRules = new Set([
-    ...result.risky,
-    ...result.duplicates,
-    ...result.invalid,
+    ...result.risky.map(({ rule }) => rule),
+    ...result.duplicates.map(({ rule }) => rule),
+    ...result.invalid.map(({ rule }) => rule),
     ...result.conflicts.flatMap(({ first, second }) => [first, second]),
-  ].map((rule) => rule.id));
+  ]);
   const healthScore = Math.round(
     100 * (1 - flaggedRules.size / Math.max(1, rules.length)),
   );
@@ -1377,13 +1392,23 @@ function Analysis({ rules, notify }) {
       <PageIntro
         eyebrow="SECURITY INTELLIGENCE"
         title="Rule Analysis"
-        subtitle="Application-level checks for duplicate, conflicting, and broad policies."
+        subtitle="Checks rule validity, duplicate traffic definitions, conflicting actions, and broad allow scopes."
         action={
           <button
             className="secondary-button"
             onClick={() => {
-              setLastRun(new Date());
-              notify("Policy analysis refreshed.");
+              const completedAt = new Date();
+              setLastRun(completedAt);
+              addLog(
+                "ANALYZE_RULE",
+                "SYSTEM",
+                `Analyzed ${rules.length} policies and found ${findings.length} findings.`,
+              );
+              notify(
+                `Analysis complete: ${findings.length} ${
+                  findings.length === 1 ? "finding" : "findings"
+                }.`,
+              );
             }}
           >
             <RefreshCw size={16} />
@@ -1449,33 +1474,73 @@ function Analysis({ rules, notify }) {
           icon={FileWarning}
           label="Invalid rules"
           value={result.invalid.length}
-          detail="No validation errors"
-          tone="green"
+          detail={
+            result.invalid.length === 0
+              ? "No validation errors"
+              : result.invalid.length === 1
+                ? "Rule needs correction"
+                : "Rules needing correction"
+          }
+          tone={result.invalid.length ? "red" : "green"}
         />
       </div>
       <section className="panel findings-panel">
         <PanelHead
           title="Findings & recommendations"
-          meta="Prioritized by risk"
+          meta={`${findings.length} ${findings.length === 1 ? "finding" : "findings"} · prioritized by severity`}
         />
-        {findings.length ? (
-          findings.map(({ key, icon: Icon, title, text, tone, level }) => (
+        <div className="filter-tabs analysis-filters" aria-label="Filter findings by severity">
+          {["ALL", "HIGH", "MEDIUM"].map((level) => (
+            <button
+              key={level}
+              type="button"
+              className={severityFilter === level ? "selected" : ""}
+              aria-pressed={severityFilter === level}
+              onClick={() => setSeverityFilter(level)}
+            >
+              {level === "ALL"
+                ? `All (${findings.length})`
+                : `${level} (${findings.filter((finding) => finding.level === level).length})`}
+            </button>
+          ))}
+        </div>
+        {visibleFindings.length ? (
+          visibleFindings.map(({ key, icon: Icon, title, text, recommendation, relatedRules, tone, level }) => (
             <div className="finding" key={key}>
               <div className={`finding-icon ${tone}`}>
                 <Icon size={18} />
               </div>
-              <div>
+              <div className="finding-copy">
                 <strong>{title}</strong>
                 <p>{text}</p>
+                <p className="finding-recommendation">
+                  <strong>Recommended action:</strong> {recommendation}
+                </p>
+                <div className="finding-rules">
+                  <span>Affected rules:</span>
+                  {relatedRules.map((rule) => (
+                    <NavLink
+                      className="text-link"
+                      to={`/rules/${encodeURIComponent(rule.id)}/edit`}
+                      key={rule.id}
+                    >
+                      {rule.id}
+                    </NavLink>
+                  ))}
+                </div>
               </div>
               <span className="risk-pill">{level}</span>
             </div>
           ))
         ) : (
           <EmptyState
-            icon={Check}
-            title="No findings"
-            text="Your simulated policy set has no current recommendations."
+            icon={severityFilter === "ALL" ? Check : Search}
+            title={severityFilter === "ALL" ? "No findings" : `No ${severityFilter.toLowerCase()} severity findings`}
+            text={
+              severityFilter === "ALL"
+                ? "Your simulated policy set has no current recommendations."
+                : "Choose another severity filter to review the remaining findings."
+            }
           />
         )}
       </section>
@@ -2171,57 +2236,106 @@ function downloadFile(content, type, filename) {
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 function analyze(rules) {
-  const signatures = new Set();
-  const duplicates = rules.filter((rule) => {
-    const signature = [
-      rule.source,
-      rule.destination,
-      rule.protocol,
-      rule.sourcePort,
-      rule.destinationPort,
-    ].join("|");
-    if (signatures.has(signature)) return true;
-    signatures.add(signature);
-    return false;
+  const firstBySignature = new Map();
+  const duplicates = [];
+  rules.forEach((rule) => {
+    const signature = ruleSignature(rule, true);
+    const original = firstBySignature.get(signature);
+    if (original) duplicates.push({ rule, original });
+    else firstBySignature.set(signature, rule);
   });
-  const risky = rules.filter(
-    (r) =>
-      r.action === "ALLOW" &&
-      [r.source, r.destination, r.destinationPort].includes("ANY"),
-  );
+  const risky = rules
+    .filter((rule) => rule.action === "ALLOW")
+    .map((rule) => {
+      const reasons = [];
+      if (isBroadNetwork(rule.source))
+        reasons.push(`source ${rule.source} is broad`);
+      if (isBroadNetwork(rule.destination))
+        reasons.push(`destination ${rule.destination} is broad`);
+      if (rule.protocol === "ANY") reasons.push("any protocol is allowed");
+      if (
+        ["TCP", "UDP", "ANY"].includes(rule.protocol) &&
+        String(rule.destinationPort).toUpperCase() === "ANY"
+      )
+        reasons.push("any destination port is allowed");
+      if (!reasons.length) return null;
+      return {
+        rule,
+        reasons,
+        recommendation:
+          "Limit source and destination networks, choose only required protocols, and specify the narrowest destination port range.",
+        level: rule.status === "ENABLED" ? "HIGH" : "MEDIUM",
+      };
+    })
+    .filter(Boolean);
   const conflicts = [];
   rules.forEach((rule, index) =>
     rules.slice(index + 1).forEach((other) => {
       if (
-        [
-          rule.source,
-          rule.destination,
-          rule.protocol,
-          rule.sourcePort,
-          rule.destinationPort,
-        ].join("|") ===
-          [
-            other.source,
-            other.destination,
-            other.protocol,
-            other.sourcePort,
-            other.destinationPort,
-          ].join("|") &&
+        ruleSignature(rule) === ruleSignature(other) &&
         rule.action !== other.action
       )
         conflicts.push({ first: rule, second: other });
     }),
   );
-  const invalid = rules.filter(
-    (rule) =>
-      !isValidNetworkAddress(rule.source) ||
-      !isValidNetworkAddress(rule.destination) ||
-      !isValidPort(rule.sourcePort) ||
-      !isValidPort(rule.destinationPort) ||
-      !Number.isInteger(Number(rule.priority)) ||
-      Number(rule.priority) < 1,
-  );
+  const seenIds = new Set();
+  const invalid = rules
+    .map((rule) => {
+      const errors = [];
+      if (!isValidNetworkAddress(rule.source))
+        errors.push(`source address or CIDR '${String(rule.source)}' is invalid`);
+      if (!isValidNetworkAddress(rule.destination))
+        errors.push(`destination address or CIDR '${String(rule.destination)}' is invalid`);
+      if (!isValidPort(rule.sourcePort))
+        errors.push(`source port or range '${String(rule.sourcePort)}' is invalid`);
+      if (!isValidPort(rule.destinationPort))
+        errors.push(`destination port or range '${String(rule.destinationPort)}' is invalid`);
+      if (!["TCP", "UDP", "ICMP", "ANY"].includes(rule.protocol))
+        errors.push(`protocol '${String(rule.protocol)}' is missing or unsupported`);
+      if (!["ALLOW", "DENY"].includes(rule.action))
+        errors.push(`action '${String(rule.action)}' must be ALLOW or DENY`);
+      if (!["ENABLED", "DISABLED"].includes(rule.status))
+        errors.push(`status '${String(rule.status)}' must be ENABLED or DISABLED`);
+      if (!Number.isInteger(Number(rule.priority)) || Number(rule.priority) < 1)
+        errors.push(`priority '${String(rule.priority)}' must be a positive whole number`);
+      if (typeof rule.description !== "string" || !rule.description.trim())
+        errors.push("description is required");
+      if (typeof rule.id !== "string" || !rule.id.trim()) {
+        errors.push("rule ID is missing");
+      } else if (seenIds.has(rule.id)) {
+        errors.push(`rule ID ${rule.id} is duplicated`);
+      } else {
+        seenIds.add(rule.id);
+      }
+      return errors.length ? { rule, errors } : null;
+    })
+    .filter(Boolean);
   return { duplicates, risky, conflicts, invalid };
+}
+function ruleSignature(rule, includeAction = false) {
+  const fields = [
+    rule.source,
+    rule.destination,
+    rule.protocol,
+    rule.sourcePort,
+    rule.destinationPort,
+  ];
+  if (includeAction) fields.push(rule.action);
+  return fields
+    .map((value) => String(value ?? "").trim().toUpperCase())
+    .join("|");
+}
+function describeRuleMatch(rule) {
+  return `source ${rule.source} -> destination ${rule.destination}; ${rule.protocol}; source port ${rule.sourcePort}; destination port ${rule.destinationPort}`;
+}
+function isBroadNetwork(value) {
+  const normalized = String(value ?? "").trim().toUpperCase();
+  if (normalized === "ANY") return true;
+  if (!isValidNetworkAddress(normalized) || !normalized.includes("/"))
+    return false;
+  const [address, prefix] = normalized.split("/");
+  const prefixLength = Number(prefix);
+  return address.includes(":") ? prefixLength <= 32 : prefixLength <= 8;
 }
 function isValidPort(value) {
   if (String(value).toUpperCase() === "ANY") return true;

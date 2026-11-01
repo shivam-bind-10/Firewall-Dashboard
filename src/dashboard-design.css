@@ -724,6 +724,41 @@ tbody tr:hover {
   border-radius: 999px;
 }
 
+.analysis-filters {
+  padding: 0 18px 12px;
+}
+
+.finding-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.finding .finding-recommendation {
+  margin-top: 8px;
+  color: #59667d;
+}
+
+.finding-recommendation strong {
+  color: #39455c;
+}
+
+.finding-rules {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+  color: #8792a5;
+  font-size: 11px;
+}
+
+.finding-rules a {
+  padding: 4px 8px;
+  border: 1px solid #e6eaf1;
+  border-radius: 999px;
+  background: #fafbfe;
+}
+
 .log-row {
   border-bottom-color: #eff1f5;
 }
