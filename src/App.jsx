@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   BrowserRouter,
   NavLink,
@@ -18,7 +18,6 @@ import {
   Bell,
   Check,
   ChevronDown,
-  CircleHelp,
   Clock3,
   Copy,
   Database,
@@ -35,6 +34,7 @@ import {
   Menu,
   Network,
   Plus,
+  Radio,
   RefreshCw,
   Search,
   Server,
@@ -50,6 +50,14 @@ import {
 import "./App.css";
 import "./ui-polish.css";
 import "./dashboard-design.css";
+import "./windows-firewall.css";
+import {
+  WindowsProfilesCards,
+  WindowsRulesManager,
+  WindowsListeningPorts,
+  QuickRuleModal,
+  ElevationHelpModal,
+} from "./WindowsFirewall";
 
 const seedRules = [
   {
@@ -164,6 +172,7 @@ const initialLogs = [
 const navItems = [
   { to: "/dashboard", label: "Overview", icon: Gauge },
   { to: "/rules", label: "Firewall Rules", icon: Shield },
+  { to: "/listening", label: "Listening Ports", icon: Radio },
   { to: "/analysis", label: "Rule Analysis", icon: Activity },
   { to: "/audit-logs", label: "Audit Logs", icon: BookOpen },
 ];
@@ -199,6 +208,161 @@ function App() {
     ),
   );
   const [toast, setToast] = useState(null);
+
+  // Live Windows Firewall state
+  const [dashboardMode, setDashboardMode] = useState("windows"); // 'windows' | 'simulation'
+  const [liveStatus, setLiveStatus] = useState(null);
+  const [liveRules, setLiveRules] = useState([]);
+  const [liveListening, setLiveListening] = useState([]);
+  const [liveLoading, setLiveLoading] = useState(false);
+  const [showAdminHelp, setShowAdminHelp] = useState(false);
+  const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [createModalInitial, setCreateModalInitial] = useState(null);
+
+  const fetchLiveStatus = async () => {
+    try {
+      const res = await fetch("/api/status");
+      if (res.ok) {
+        const data = await res.json();
+        setLiveStatus(data);
+      }
+    } catch (e) {
+      console.warn("Live firewall API not reachable:", e);
+    }
+  };
+
+  const fetchLiveRules = async (force = false) => {
+    setLiveLoading(true);
+    try {
+      const res = await fetch(`/api/rules${force ? "?force=true" : ""}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data)) setLiveRules(data);
+      }
+    } catch (e) {
+      console.error("Error fetching live rules:", e);
+    } finally {
+      setLiveLoading(false);
+    }
+  };
+
+  const fetchLiveListening = async () => {
+    try {
+      const res = await fetch("/api/listening");
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data)) setLiveListening(data);
+      }
+    } catch (e) {
+      console.error("Error fetching listening ports:", e);
+    }
+  };
+
+  useEffect(() => {
+    fetchLiveStatus();
+    fetchLiveRules();
+    fetchLiveListening();
+  }, []);
+
+  const handleToggleLiveRule = async (ruleName, nextEnabled) => {
+    try {
+      const res = await fetch("/api/rules/toggle", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: ruleName, enabled: nextEnabled }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        if (res.status === 403 || data.error?.includes("Administrator")) {
+          setShowAdminHelp(true);
+        }
+        notify(data.error || "Failed to update rule.", "error");
+        return;
+      }
+      notify(`Rule '${ruleName}' ${nextEnabled ? "enabled" : "disabled"}.`);
+      addLog("TOGGLE_LIVE_RULE", ruleName, `Toggled live OS rule to ${nextEnabled ? "ENABLED" : "DISABLED"}`);
+      setLiveRules((prev) =>
+        prev.map((r) =>
+          r.name === ruleName
+            ? { ...r, status: nextEnabled ? "ENABLED" : "DISABLED" }
+            : r
+        )
+      );
+    } catch (e) {
+      notify(e.message, "error");
+    }
+  };
+
+  const handleDeleteLiveRule = async (ruleName) => {
+    try {
+      const res = await fetch("/api/rules/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: ruleName }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        if (res.status === 403 || data.error?.includes("Administrator")) {
+          setShowAdminHelp(true);
+        }
+        notify(data.error || "Failed to delete rule.", "error");
+        return;
+      }
+      notify(`Rule '${ruleName}' deleted from Windows Firewall.`);
+      addLog("DELETE_LIVE_RULE", ruleName, "Deleted live OS firewall rule");
+      setLiveRules((prev) => prev.filter((r) => r.name !== ruleName));
+    } catch (e) {
+      notify(e.message, "error");
+    }
+  };
+
+  const handleCreateLiveRule = async (ruleData) => {
+    try {
+      const res = await fetch("/api/rules/create", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(ruleData),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        if (res.status === 403 || data.error?.includes("Administrator")) {
+          setShowAdminHelp(true);
+        }
+        notify(data.error || "Failed to create rule.", "error");
+        return;
+      }
+      notify(`Created rule '${ruleData.name}' in Windows Firewall!`);
+      addLog("CREATE_LIVE_RULE", ruleData.name, `Created live OS rule for ${ruleData.direction} traffic`);
+      setCreateModalOpen(false);
+      fetchLiveRules(true);
+    } catch (e) {
+      notify(e.message, "error");
+    }
+  };
+
+  const handleToggleLiveProfile = async (profileName, nextEnabled) => {
+    try {
+      const res = await fetch("/api/profiles/toggle", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ profileName, enabled: nextEnabled }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        if (res.status === 403 || data.error?.includes("Administrator")) {
+          setShowAdminHelp(true);
+        }
+        notify(data.error || "Failed to update profile.", "error");
+        return;
+      }
+      notify(`${profileName} profile ${nextEnabled ? "activated" : "deactivated"}.`);
+      addLog("TOGGLE_PROFILE", profileName, `Set ${profileName} profile state to ${nextEnabled ? "ON" : "OFF"}`);
+      fetchLiveStatus();
+    } catch (e) {
+      notify(e.message, "error");
+    }
+  };
+
   const persistRules = (next) => {
     setRules(next);
     localStorage.setItem("firewall-rules", JSON.stringify(next));
@@ -252,6 +416,24 @@ function App() {
           notify={notify}
           profile={profile}
           saveProfile={saveProfile}
+          dashboardMode={dashboardMode}
+          setDashboardMode={setDashboardMode}
+          liveStatus={liveStatus}
+          liveRules={liveRules}
+          liveListening={liveListening}
+          liveLoading={liveLoading}
+          fetchLiveRules={fetchLiveRules}
+          fetchLiveListening={fetchLiveListening}
+          handleToggleLiveRule={handleToggleLiveRule}
+          handleDeleteLiveRule={handleDeleteLiveRule}
+          handleCreateLiveRule={handleCreateLiveRule}
+          handleToggleLiveProfile={handleToggleLiveProfile}
+          showAdminHelp={showAdminHelp}
+          setShowAdminHelp={setShowAdminHelp}
+          createModalOpen={createModalOpen}
+          setCreateModalOpen={setCreateModalOpen}
+          createModalInitial={createModalInitial}
+          setCreateModalInitial={setCreateModalInitial}
         />
       )}{" "}
       {toast && <Toast {...toast} onClose={() => setToast(null)} />}
@@ -359,19 +541,39 @@ function DashboardShell({
   notify,
   profile,
   saveProfile,
+  dashboardMode,
+  setDashboardMode,
+  liveStatus,
+  liveRules,
+  liveListening,
+  liveLoading,
+  fetchLiveRules,
+  fetchLiveListening,
+  handleToggleLiveRule,
+  handleDeleteLiveRule,
+  handleCreateLiveRule,
+  handleToggleLiveProfile,
+  showAdminHelp,
+  setShowAdminHelp,
+  createModalOpen,
+  setCreateModalOpen,
+  createModalInitial,
+  setCreateModalInitial,
 }) {
   const location = useLocation();
   const navigate = useNavigate();
   const [mobileOpen, setMobileOpen] = useState(false);
   const title = location.pathname.startsWith("/rules")
-    ? "Firewall Rules"
-    : location.pathname === "/analysis"
-      ? "Rule Analysis"
-      : location.pathname === "/audit-logs"
-        ? "Audit Logs"
-        : location.pathname === "/settings"
-          ? "Settings"
-          : "Overview";
+    ? (dashboardMode === "windows" ? "Windows Defender Rules" : "Firewall Rules")
+    : location.pathname === "/listening"
+      ? "Listening Ports & Apps"
+      : location.pathname === "/analysis"
+        ? "Rule Analysis"
+        : location.pathname === "/audit-logs"
+          ? "Audit Logs"
+          : location.pathname === "/settings"
+            ? "Settings"
+            : "Overview";
   const result = analyze(rules);
   const analysisFindingCount =
     result.duplicates.length +
@@ -403,9 +605,30 @@ function DashboardShell({
             <X size={18} />
           </button>
         </div>
-        <div className="mode-chip">
-          <span className="live-dot" />
-          SIMULATION MODE <CircleHelp size={14} />
+        <div className="mode-chip" style={{ justifyContent: "space-between", padding: "8px 10px" }}>
+          <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+            <span
+              className="live-dot"
+              style={{ background: dashboardMode === "windows" ? "var(--cyan)" : "var(--green)" }}
+            />
+            {dashboardMode === "windows" ? "WINDOWS LIVE" : "SIMULATION"}
+          </span>
+          <button
+            type="button"
+            style={{
+              background: "none",
+              border: "none",
+              color: "var(--cyan)",
+              fontSize: "9px",
+              cursor: "pointer",
+              textDecoration: "underline",
+            }}
+            onClick={() =>
+              setDashboardMode(dashboardMode === "windows" ? "simulation" : "windows")
+            }
+          >
+            Switch
+          </button>
         </div>
         <nav>
           <p className="nav-label">CONTROL CENTER</p>
@@ -437,8 +660,16 @@ function DashboardShell({
           <div className="status-line">
             <span className="live-dot" />
             <div>
-              <strong>Simulation ready</strong>
-              <small>Browser storage only</small>
+              <strong>
+                {dashboardMode === "windows"
+                  ? "Connected to OS"
+                  : "Simulation ready"}
+              </strong>
+              <small>
+                {dashboardMode === "windows"
+                  ? `${liveRules.length || (liveStatus?.totalRules || 702)} Windows rules`
+                  : "Browser storage only"}
+              </small>
             </div>
           </div>
           <div className="profile">
@@ -485,10 +716,44 @@ function DashboardShell({
             <h2>{title}</h2>
           </div>
           <div className="topbar-actions">
-            <div className="connection">
-              <span className="live-dot" />
-              Local simulation
+            {/* Mode switch */}
+            <div className="wf-mode-toggle">
+              <button
+                type="button"
+                className={`wf-mode-btn ${dashboardMode === "windows" ? "active" : ""}`}
+                onClick={() => setDashboardMode("windows")}
+              >
+                <Shield size={13} /> Windows Defender (Live)
+              </button>
+              <button
+                type="button"
+                className={`wf-mode-btn ${dashboardMode === "simulation" ? "active" : ""}`}
+                onClick={() => setDashboardMode("simulation")}
+              >
+                <SlidersHorizontal size={13} /> Simulation
+              </button>
             </div>
+
+            {/* Admin status badge */}
+            {dashboardMode === "windows" &&
+              (liveStatus?.isAdmin ? (
+                <span
+                  className="wf-admin-badge admin"
+                  title="Running with full Administrator rights"
+                >
+                  <Check size={11} /> Admin (Full Control)
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  className="wf-admin-badge readonly"
+                  onClick={() => setShowAdminHelp(true)}
+                  title="Click to view how to run with Administrator privileges"
+                >
+                  <AlertTriangle size={11} /> Read-Only Mode
+                </button>
+              ))}
+
             <button
               className="icon-button notification"
               onClick={() => navigate("/analysis")}
@@ -522,9 +787,62 @@ function DashboardShell({
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
             <Route
               path="/dashboard"
-              element={<Dashboard stats={stats} rules={rules} logs={logs} />}
+              element={
+                <Dashboard
+                  stats={stats}
+                  rules={rules}
+                  logs={logs}
+                  dashboardMode={dashboardMode}
+                  liveStatus={liveStatus}
+                  liveRules={liveRules}
+                  liveListening={liveListening}
+                  liveLoading={liveLoading}
+                  onToggleLiveProfile={handleToggleLiveProfile}
+                  onShowAdminHelp={() => setShowAdminHelp(true)}
+                  onOpenCreateModal={() => {
+                    setCreateModalInitial(null);
+                    setCreateModalOpen(true);
+                  }}
+                  onToggleLiveRule={handleToggleLiveRule}
+                />
+              }
             />
-            <Route path="/rules" element={<Rules {...shared} />} />
+            <Route
+              path="/rules"
+              element={
+                dashboardMode === "windows" ? (
+                  <WindowsRulesManager
+                    rules={liveRules}
+                    loading={liveLoading}
+                    isAdmin={liveStatus?.isAdmin}
+                    onRefresh={() => fetchLiveRules(true)}
+                    onToggleRule={handleToggleLiveRule}
+                    onDeleteRule={handleDeleteLiveRule}
+                    onOpenCreateModal={() => {
+                      setCreateModalInitial(null);
+                      setCreateModalOpen(true);
+                    }}
+                    onShowAdminHelp={() => setShowAdminHelp(true)}
+                  />
+                ) : (
+                  <Rules {...shared} />
+                )
+              }
+            />
+            <Route
+              path="/listening"
+              element={
+                <WindowsListeningPorts
+                  listening={liveListening}
+                  loading={liveLoading}
+                  onRefresh={fetchLiveListening}
+                  onCreateForPort={(item) => {
+                    setCreateModalInitial(item);
+                    setCreateModalOpen(true);
+                  }}
+                />
+              }
+            />
             <Route path="/rules/create" element={<RuleEditor {...shared} />} />
             <Route
               path="/rules/:id/edit"
@@ -550,11 +868,37 @@ function DashboardShell({
           </Routes>
         </main>
       </div>
+
+      {/* Modals for Windows Firewall operations */}
+      <QuickRuleModal
+        isOpen={createModalOpen}
+        onClose={() => setCreateModalOpen(false)}
+        onSubmit={handleCreateLiveRule}
+        initialData={createModalInitial}
+      />
+      <ElevationHelpModal
+        isOpen={showAdminHelp}
+        onClose={() => setShowAdminHelp(false)}
+      />
     </div>
   );
 }
 
-function Dashboard({ stats, rules, logs }) {
+function Dashboard({
+  stats,
+  rules,
+  logs,
+  dashboardMode,
+  liveStatus,
+  liveRules,
+  liveListening,
+  liveLoading,
+  onToggleLiveProfile,
+  onShowAdminHelp,
+  onOpenCreateModal,
+  onToggleLiveRule,
+}) {
+  const isWindows = dashboardMode === "windows";
   const alerts = analyze(rules);
   const activityDays = Array.from({ length: 7 }, (_, index) => {
     const date = new Date();
@@ -580,61 +924,91 @@ function Dashboard({ stats, rules, logs }) {
     rules.length ? (count / rules.length) * 100 : 0,
   );
   const totalEvents = activityDays.reduce((sum, day) => sum + day.events, 0);
+
+  // Live Windows stats
+  const totalLive = liveRules.length || (liveStatus?.totalRules || 702);
+  const activeLive = liveRules.filter((r) => r.status === "ENABLED").length;
+  const inboundLive = liveRules.filter((r) => r.direction === "INBOUND").length;
+  const outboundLive = liveRules.filter((r) => r.direction === "OUTBOUND").length;
+  const listeningCount = liveListening ? liveListening.length : 0;
+
   return (
     <>
       <PageIntro
-        eyebrow="SYSTEM OVERVIEW"
-        title="Good morning, Shivam"
-        subtitle="Here's what is happening across your simulated network policy."
+        eyebrow={isWindows ? "WINDOWS DEFENDER FIREWALL (LIVE)" : "SYSTEM OVERVIEW"}
+        title={isWindows ? "Windows Firewall Controller" : "Good morning, Shivam"}
+        subtitle={
+          isWindows
+            ? "Manage and monitor live OS packet filtering rules and network profiles on this computer."
+            : "Here's what is happening across your simulated network policy."
+        }
         action={
-          <NavLink className="primary-button" to="/rules/create">
-            <Plus size={17} />
-            Create rule
-          </NavLink>
+          isWindows ? (
+            <button className="primary-button" onClick={onOpenCreateModal}>
+              <Plus size={17} /> Add Firewall Rule
+            </button>
+          ) : (
+            <NavLink className="primary-button" to="/rules/create">
+              <Plus size={17} /> Create rule
+            </NavLink>
+          )
         }
       />
+
+      {/* When in Windows mode, render Profile Cards at the top */}
+      {isWindows && (
+        <WindowsProfilesCards
+          profiles={liveStatus?.profiles}
+          isAdmin={liveStatus?.isAdmin}
+          onToggleProfile={onToggleLiveProfile}
+          onShowAdminHelp={onShowAdminHelp}
+          loading={liveLoading}
+        />
+      )}
+
       <div className="stat-grid">
         <Stat
-          label="Total rules"
-          value={stats.total}
-          detail="Across all policies"
+          label={isWindows ? "Total OS Rules" : "Total rules"}
+          value={isWindows ? totalLive : stats.total}
+          detail={isWindows ? "Active Windows rules" : "Across all policies"}
           icon={Shield}
           tone="blue"
-          to="/rules?filter=ALL"
+          to="/rules"
         />
         <Stat
-          label="Active rules"
-          value={stats.active}
-          detail="Enabled in simulation"
+          label={isWindows ? "Active Rules" : "Active rules"}
+          value={isWindows ? activeLive : stats.active}
+          detail={isWindows ? "Currently enabled in OS" : "Enabled in simulation"}
           icon={Zap}
           tone="green"
-          to="/rules?filter=ENABLED"
+          to="/rules"
         />
         <Stat
-          label="Allow rules"
-          value={stats.allow}
-          detail="Marked to allow"
+          label={isWindows ? "Inbound Rules" : "Allow rules"}
+          value={isWindows ? inboundLive : stats.allow}
+          detail={isWindows ? "Traffic entering PC" : "Marked to allow"}
           icon={Check}
           tone="cyan"
-          to="/rules?filter=ALLOW"
+          to="/rules"
         />
         <Stat
-          label="Deny rules"
-          value={stats.deny}
-          detail="Marked to deny"
+          label={isWindows ? "Outbound Rules" : "Deny rules"}
+          value={isWindows ? outboundLive : stats.deny}
+          detail={isWindows ? "Traffic leaving PC" : "Marked to deny"}
           icon={ShieldAlert}
           tone="red"
-          to="/rules?filter=DENY"
+          to="/rules"
         />
         <Stat
-          label="Risk signals"
-          value={stats.risky}
-          detail="Need attention"
-          icon={AlertTriangle}
+          label={isWindows ? "Listening Ports" : "Risk signals"}
+          value={isWindows ? listeningCount : stats.risky}
+          detail={isWindows ? "Active open TCP ports" : "Need attention"}
+          icon={isWindows ? Radio : AlertTriangle}
           tone="amber"
-          to="/analysis"
+          to={isWindows ? "/listening" : "/analysis"}
         />
       </div>
+
       <div className="dashboard-grid">
         <section className="panel activity-panel">
           <PanelHead title="Policy activity" meta="Last 7 days" />
@@ -675,11 +1049,14 @@ function Dashboard({ stats, rules, logs }) {
           </div>
         </section>
         <section className="panel distribution-panel">
-          <PanelHead title="Protocol distribution" meta={`${rules.length} total`} />
+          <PanelHead
+            title={isWindows ? "Protocol breakdown" : "Protocol distribution"}
+            meta={`${isWindows ? totalLive : rules.length} total`}
+          />
           <div className="donut-wrap">
             <div className="donut">
               <div>
-                <strong>{rules.length}</strong>
+                <strong>{isWindows ? totalLive : rules.length}</strong>
                 <small>RULES</small>
               </div>
             </div>
@@ -692,17 +1069,96 @@ function Dashboard({ stats, rules, logs }) {
           </div>
         </section>
       </div>
+
+      {/* Recent Rules Panel */}
       <section className="panel table-panel">
         <PanelHead
-          title="Recent rules"
+          title={isWindows ? "Live Windows Defender rules" : "Recent rules"}
           meta={
             <NavLink to="/rules" className="text-link">
-              View all rules <ArrowUp size={14} />
+              View all rules ({isWindows ? totalLive : rules.length}) <ArrowUp size={14} />
             </NavLink>
           }
         />
-        <RuleTable rules={rules.slice(0, 4)} compact />
+        {isWindows && liveRules.length > 0 ? (
+          <div className="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th style={{ width: "40px" }}>STATE</th>
+                  <th style={{ width: "85px" }}>DIR</th>
+                  <th style={{ width: "75px" }}>ACTION</th>
+                  <th>RULE NAME & APPLICATION</th>
+                  <th style={{ width: "80px" }}>PROTO</th>
+                  <th style={{ width: "90px" }}>PORT</th>
+                </tr>
+              </thead>
+              <tbody>
+                {liveRules.slice(0, 5).map((r, i) => (
+                  <tr key={`${r.name}-${i}`}>
+                    <td>
+                      <label
+                        className="wf-switch"
+                        title={
+                          liveStatus?.isAdmin
+                            ? `Click to toggle`
+                            : "Administrator required to toggle"
+                        }
+                      >
+                        <input
+                          type="checkbox"
+                          checked={r.status === "ENABLED"}
+                          onChange={() => {
+                            if (!liveStatus?.isAdmin) {
+                              onShowAdminHelp();
+                            } else {
+                              onToggleLiveRule(r.name, r.status !== "ENABLED");
+                            }
+                          }}
+                        />
+                        <span className="wf-slider" />
+                      </label>
+                    </td>
+                    <td>
+                      <span
+                        className={`dir-badge ${
+                          r.direction === "INBOUND" ? "inbound" : "outbound"
+                        }`}
+                      >
+                        {r.direction}
+                      </span>
+                    </td>
+                    <td>
+                      <span
+                        className={`action-badge ${
+                          r.action === "ALLOW" ? "allow" : "deny"
+                        }`}
+                      >
+                        {r.action}
+                      </span>
+                    </td>
+                    <td>
+                      <strong style={{ color: "var(--text)" }}>{r.name}</strong>
+                      {r.application && (
+                        <div className="wf-app-badge" title={r.application}>
+                          {r.application.split("\\").pop()}
+                        </div>
+                      )}
+                    </td>
+                    <td>
+                      <span className="protocol">{r.protocol}</span>
+                    </td>
+                    <td className="mono">{r.localPorts || "Any"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <RuleTable rules={rules.slice(0, 4)} compact />
+        )}
       </section>
+
       <section className="panel alerts-panel">
         <PanelHead
           title="Security signals"
